@@ -126,11 +126,15 @@ viz.plot_vector_field('steric')
 
 ```
 box/
-├── __init__.py          # Package exports
-├── models.py            # Data structures (Molecule, EnvironmentalConditions)
-├── core_engine.py       # 11-channel voxel physics engine
-├── visualizer.py        # FEA-style 3D visualization
-└── designer.py          # Formulation screening
+├──key/
+│    ├── __init__.py          # Package exports
+│    ├── models.py            # Data structures (Molecule, EnvironmentalConditions)
+│    ├── core_engine.py       # 11-channel voxel physics engine
+│    ├── visualizer.py        # FEA-style 3D visualization
+│    └── designer.py          # Formulation screening
+├──examples/
+├──tests/
+
 ```
 
 ### Core Modules
