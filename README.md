@@ -205,7 +205,7 @@ Contributions welcome! Areas of interest:
 
 ```bash
 # Development setup
-git clone https://github.com/yourusername/keybox.git
+git clone https://github.com/sangeet01/keybox.git
 cd keybox
 pip install -e .
 ```
@@ -234,7 +234,7 @@ Free for academic and commercial use. See [LICENSE](LICENSE) for details.
 
 **Sangeet Sharma**  
 Pharmaceutical Sciences | Computational Chemistry  
-Linkedin:   
+Linkedin: [Sangeet Sharma](https://linkedin.com/in/sangeet-sangit)
 GitHub: [@sangeet0](https://github.com/sangeet01)
 
 ---
