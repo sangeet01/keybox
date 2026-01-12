@@ -237,9 +237,9 @@ Free for academic and commercial use. See [LICENSE](LICENSE) for details.
 ## 📧 Contact
 
 **Sangeet Sharma**  
-Pharmaceutical Sciences | Computational Chemistry  
+Pharmaceutical Sciences
 Linkedin: [Sangeet Sharma](https://linkedin.com/in/sangeet-sangit)
-GitHub: [@sangeet0](https://github.com/sangeet01)
+GitHub: [@sangeet01](https://github.com/sangeet01)
 
 ---
 
@@ -254,4 +254,4 @@ GitHub: [@sangeet0](https://github.com/sangeet01)
 
 **Version**: 0.6.0  
 **Status**: Stable Release  
-**Last Updated**: January 2025
+**Last Updated**: January 2026
