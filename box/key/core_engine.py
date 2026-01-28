@@ -1,6 +1,6 @@
 """
 KeyBox Core Engine: Voxel-Based Physics Kernel
-Inspired by PicoGK Paradigm
+
 """
 
 import numpy as np
@@ -573,3 +573,4 @@ class KeyBoxSystem:
 
     def get_stability_recommendations(self):
         return ["ROBUSTNESS: Formulation is resilient."]
+
