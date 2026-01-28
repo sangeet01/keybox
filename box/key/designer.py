@@ -1,6 +1,6 @@
 """
 KeyBox Designer: High-Level Formulation Logic & Screening
-Inspired by Leap71 Buildup logic
+Inspired by Engineeing approach in Manufacturing
 """
 
 import numpy as np
@@ -180,3 +180,4 @@ def analyze_enhanced_formulation_with_visualization(api_smiles, api_name, exc_sm
         print(f"[VISUALIZATION] Distribution plot saved to viz_output/ocs_distribution.jpg")
         
     return res
+
