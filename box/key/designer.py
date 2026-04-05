@@ -1,6 +1,6 @@
 """
 KeyBox Designer: High-Level Formulation Logic & Screening
-Inspired by Engineeing approach in Manufacturing
+Inspired by Leap71 Buildup logic
 """
 
 import numpy as np
@@ -134,13 +134,13 @@ def screen_enhanced_excipients_for_api(api_smiles: str, api_name: str, api_type:
             res['excipient'] = name
             results.append(res)
             un = res['confidence_intervals'].get('std', 0.0)
-            print(f"✓ {name}: OCS={res['metrics']['OCS']:.1f} ± {un:.1f}")
+            print(f"[OK] {name}: OCS={res['metrics']['OCS']:.1f} +/- {un:.1f}")
         except Exception as e:
-            print(f"✗ {name}: {e}")
+            print(f"[FAIL] {name}: {e}")
             
     df = pd.DataFrame([{
         'Excipient': r['excipient'], 
-        'OCS': f"{r['metrics']['OCS']:.1f} ± {r['confidence_intervals'].get('std', 0.0):.1f}", 
+        'OCS': f"{r['metrics']['OCS']:.1f} +/- {r['confidence_intervals'].get('std', 0.0):.1f}", 
         'Classification': r['classification'], 
         'Risks': ", ".join(r['mechanisms'][:2])
     } for r in sorted(results, key=lambda x: x['metrics']['OCS'], reverse=True)])
@@ -180,4 +180,3 @@ def analyze_enhanced_formulation_with_visualization(api_smiles, api_name, exc_sm
         print(f"[VISUALIZATION] Distribution plot saved to viz_output/ocs_distribution.jpg")
         
     return res
-

@@ -1,6 +1,6 @@
 """
 KeyBox Core Engine: Voxel-Based Physics Kernel
-
+Inspired by PicoGK Paradigm
 """
 
 import numpy as np
@@ -484,13 +484,13 @@ class KeyBoxSystem:
         if ocs >= t['partially_compatible']: return 'Partially Compatible', f'Monitor: {", ".join(mechs[:2])}'
         return 'Incompatible', f'Poor stability: {", ".join(mechs[:2])}'
 
-    def analyze_enhanced_formulation(self, include_uncertainty=True, include_voi_uncertainty=False):
+    def analyze_enhanced_formulation(self, include_uncertainty=True, include_voi_uncertainty=False, n_mc=50):
         self.compute_multi_molecule_superposition(); metrics = self.compute_enhanced_interaction_metrics()
         mechs = self.detect_enhanced_incompatibility_mechanisms(metrics)
         if self.compute_reaction_integrals() > 50: mechs.append('High Reaction Probability')
         voi_un = self.compute_voi_uncertainty() if include_voi_uncertainty else {}
         cls, mch = self.classify_enhanced_compatibility(metrics['OCS'], mechs)
-        ci = self.monte_carlo_uncertainty_analysis(50) if include_uncertainty else {}
+        ci = self.monte_carlo_uncertainty_analysis(n_mc) if include_uncertainty else {}
         self.interaction_metrics = metrics; self.confidence_intervals = ci
         return {'metrics': metrics, 'classification': cls, 'mechanism': mch, 'mechanisms': mechs, 'confidence_intervals': ci, 'voi_uncertainty': voi_un}
 
@@ -573,4 +573,3 @@ class KeyBoxSystem:
 
     def get_stability_recommendations(self):
         return ["ROBUSTNESS: Formulation is resilient."]
-
