@@ -233,3 +233,9 @@ See [LICENSE](LICENSE) file for full details.
 **Version**: 0.8.0
 **Status**: Stable Release -- Generative Formulation Engine
 **Last Updated**: April 2026
+
+
+
+---
+PS: Sangeet's the name, a daft undergrad splashing through chemistry and code like a toddler; my titrations are a mess, and I've used my mouth to pipette.
+
