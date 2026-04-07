@@ -6,6 +6,11 @@
 [![License: Apache 2.0 + Commons Clause](https://img.shields.io/badge/license-Apache%202.0%20%2B%20Commons%20Clause-orange.svg)](LICENSE)
 [![Version: 0.8.0](https://img.shields.io/badge/version-0.8.0-brightgreen.svg)]()
 
+
+<p align="center">
+  <img src="artifacts/logo.png" alt="KeyBox Logo" width="100%">
+</p>
+
 ---
 
 ## Overview
