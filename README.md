@@ -8,7 +8,7 @@
 
 
 <p align="center">
-  <img src="artifacts/logo.png" alt="KeyBox Logo" width="100%">
+  <img src="box/artifacts/logo.png" alt="KeyBox Logo" width="100%">
 </p>
 
 ---
