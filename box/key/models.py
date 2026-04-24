@@ -44,10 +44,21 @@ class Molecule:
     oxidizable_groups: np.ndarray = None  # For oxidation (thioether, aldehyde, etc)
     oxidizing_groups: np.ndarray = None   # For oxidation (peroxides)
     concentration: float = 1.0            # Molar fraction or concentration
-    conformations: Optional[List[np.ndarray]] = None  # Multiple conformations
+    conformations: Optional[List[np.ndarray]] = None  # 3D coords per tautomer (N_tauts, N_atoms, 3)
+    taut_weights: Optional[List[float]] = None        # Boltzmann population weight per tautomer
+    # Per-tautomer charge/h-bond arrays — same order as conformations.
+    # These properties change across tautomers (charges, donors, acceptors differ);
+    # steric/vdW/hydrophobic are geometry-dependent and averaged separately.
+    taut_charges: Optional[List[np.ndarray]] = None
+    taut_h_donors: Optional[List[np.ndarray]] = None
+    taut_h_acceptors: Optional[List[np.ndarray]] = None
+    taut_amine_groups: Optional[List[np.ndarray]] = None
+    taut_carbonyl_groups: Optional[List[np.ndarray]] = None
+    taut_acid_groups: Optional[List[np.ndarray]] = None
+    taut_base_groups: Optional[List[np.ndarray]] = None
     molecular_weight: float = 0.0
     flexibility: float = 0.0             # Conformational flexibility score
-    smiles: Optional[str] = None         # SMILES for functional group tracking
+    smiles: Optional[str] = None         # Canonical SMILES of dominant tautomer
 
 @dataclass
 class EnvironmentalConditions:

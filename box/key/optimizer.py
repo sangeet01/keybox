@@ -317,7 +317,7 @@ class KeyBoxOptimizer:
             return {
                 "design_df": design_df,
                 "optimal_params": optimal_real,
-                "predicted_ocs": -result.fun,
+                "predicted_ocs": float(np.clip(-result.fun, 0.0, 100.0)),
                 "model": model
             }
         except ImportError:
@@ -369,7 +369,7 @@ class KeyBoxOptimizer:
                 print(f"[BBD] Optimal Configuration: {optimal_real}")
 
             return {"design_df": design_df, "optimal_params": optimal_real,
-                    "predicted_ocs": -result.fun, "model": model}
+                    "predicted_ocs": float(np.clip(-result.fun, 0.0, 100.0)), "model": model}
         except ImportError:
             print("[WARNING] scikit-learn not found. Returning raw design results.")
             return {"design_df": design_df}
