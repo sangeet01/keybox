@@ -79,7 +79,13 @@ def _extract_atom_properties(mol_h: Chem.Mol) -> Dict[str, np.ndarray]:
                 for idx in m: acid_groups[idx] = 1.0
 
     base_groups = np.zeros(n)
-    for smarts in ['[NX3;H2,H1,H0;!$(NC=O)]', '[$(N[C,H](=[N,H])[N,H])]']:
+    for smarts in [
+        # Primary/secondary/tertiary amine — exclude amides AND enol-imines
+        # (enol-imine: N adjacent to C=C-OH, tautomer of lactam/amide)
+        '[NX3;H2,H1,H0;!$(NC=O);!$(N/C=C/O);!$(NC(=C)O)]',
+        # Biguanidine/guanidine-type bases
+        '[$(N[C,H](=[N,H])[N,H])]',
+    ]:
         pat = Chem.MolFromSmarts(smarts)
         if pat:
             for m in mol_h.GetSubstructMatches(pat):

@@ -9,7 +9,7 @@ Version: 0.8.0
 License: Apache 2.0
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.1"
 __author__ = "Sangeet Sharma"
 __license__ = "Apache 2.0"
 
@@ -19,7 +19,8 @@ from .models import (
     DosageForm,
     Molecule,
     EnvironmentalConditions,
-    DosageFormConfig
+    DosageFormConfig,
+    DosageFormResult
 )
 
 # Physics engine
@@ -29,7 +30,9 @@ from .core_engine import (
     ProcessPhysics,
     MicrostructurePhysics,
     TemporalPhysics,
-    KeyBoxSystem
+    KeyBoxSystem,
+    compute_hansen_chi,
+    _estimate_hansen_params
 )
 
 # Visualization
@@ -66,6 +69,7 @@ __all__ = [
     "Molecule",
     "EnvironmentalConditions",
     "DosageFormConfig",
+    "DosageFormResult",
 
     # Physics engine
     "EnhancedVoxelGrid",
@@ -74,6 +78,8 @@ __all__ = [
     "MicrostructurePhysics",
     "TemporalPhysics",
     "KeyBoxSystem",
+    "compute_hansen_chi",
+    "_estimate_hansen_params",
 
     # Visualization
     "VoxelVisualizer",
