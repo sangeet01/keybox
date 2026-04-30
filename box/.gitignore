@@ -1,0 +1,31 @@
+# Compiled binaries - build locally with build_nibble.py
+*.dll
+*.so
+*.pyd
+*.exe
+
+# Build artifacts
+_nibble_ext.c
+*.o
+*.obj
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyw
+.Python
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+desktop.ini
+.DS_Store
+Thumbs.db

@@ -22,6 +22,8 @@ def run(label, fn):
         print(f"  [PASS] {label}")
         return True
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"  [FAIL] {label} -> {e}")
         return False
 

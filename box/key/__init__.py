@@ -5,11 +5,11 @@ Open-source computational platform for predicting pharmaceutical formulation
 incompatibilities using 3D voxel field theory.
 
 Author: Sangeet Sharma
-Version: 0.8.0
+Version: 0.9.3
 License: Apache 2.0
 """
 
-__version__ = "0.9.1"
+__version__ = "0.9.3"
 __author__ = "Sangeet Sharma"
 __license__ = "Apache 2.0"
 
@@ -20,20 +20,37 @@ from .models import (
     Molecule,
     EnvironmentalConditions,
     DosageFormConfig,
-    DosageFormResult
+    DosageFormResult,
 )
 
-# Physics engine
-from .core_engine import (
-    EnhancedVoxelGrid,
+# Modular Physics Engine
+from .voxel_grid import EnhancedVoxelGrid
+from .physics import (
     MultiComponentSystem,
     ProcessPhysics,
     MicrostructurePhysics,
     TemporalPhysics,
-    KeyBoxSystem,
     compute_hansen_chi,
-    _estimate_hansen_params
+    _estimate_hansen_params,
 )
+from .mechanisms import (
+    compute_metal_ox_voi,
+    compute_polymorph_voi,
+    compute_photo_voi,
+    compute_nucl_add_voi,
+    classify_gfa,
+    compute_transester_voi,
+    compute_complexation_voi,
+    compute_adsorption_voi,
+    compute_eutectic_voi,
+    classify_salt,
+    _compute_disprop_voi
+)
+from .core_engine import KeyBoxSystem
+from .nibble_bridge import NibbleEngine
+
+# Legacy entry point (re-exports)
+from . import core_engine
 
 # Visualization
 from .visualizer import (
@@ -50,7 +67,7 @@ from .designer import (
     DesignerOptimizer
 )
 
-# Optimization engine (v0.8.0)
+# Optimization engine (v0.8.0+)
 from .optimizer import (
     FormulationOptimizer,
     KeyBoxOptimizer,
@@ -80,6 +97,16 @@ __all__ = [
     "KeyBoxSystem",
     "compute_hansen_chi",
     "_estimate_hansen_params",
+    "compute_metal_ox_voi",
+    "compute_polymorph_voi",
+    "compute_photo_voi",
+    "compute_nucl_add_voi",
+    "classify_salt",
+    "_compute_disprop_voi",
+    "compute_transester_voi",
+    "compute_complexation_voi",
+    "compute_adsorption_voi",
+    "compute_eutectic_voi",
 
     # Visualization
     "VoxelVisualizer",
@@ -92,8 +119,9 @@ __all__ = [
     "ENHANCED_EXCIPIENT_LIBRARY",
     "DesignerOptimizer",
 
-    # Optimizer (v0.8.0)
+    # Optimizer
     "FormulationOptimizer",
     "KeyBoxOptimizer",
     "generate_box_behnken",
+    "NibbleEngine",
 ]

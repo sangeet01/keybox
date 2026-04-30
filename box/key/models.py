@@ -128,6 +128,9 @@ class DosageFormConfig:
     # SUSPENSION parameters
     # Ref: Müller & Böhm, Pharm. Ind. 1997
     particle_diameter_um:  float = 10.0    # mean particle diameter µm
+    particle_density_g_cm3: float = 1.3    # g/cm3 (default ~API density)
+    viscosity_cP:          float = 1.0     # mPa*s (water ~1.0)
+    suspending_agent_conc: float = 0.0     # % w/v
 
 
 
