@@ -2,8 +2,8 @@
 verify_nibble.py
 End-to-end verification of the Nibble docking engine.
 Uses a real aspirin molecule created from SMILES via the KeyBox designer.
+No mocks anywhere.
 """
-
 import sys
 import os
 import time
@@ -50,13 +50,6 @@ def test_sniper_phase():
     assert atoms > 0
     print(f"  Sniper  pocket : {atoms} atoms, loaded in {elapsed:.1f} ms")
     
-    # Export the high-resolution pocket for visualization
-    start_c = (POCKET_CENTER[0] - POCKET_RADIUS, POCKET_CENTER[1] - POCKET_RADIUS, POCKET_CENTER[2] - POCKET_RADIUS)
-    engine.export_cube('sniper_steric.cube', channel=0, start_coords=start_c)
-    print("  Exported sniper_steric.cube")
-    engine.export_plotly_html('sniper_steric.html', channel=0, isovalue=0.1)
-    print("  Exported sniper_steric.html")
-    
     return engine
 
 
@@ -92,6 +85,55 @@ def test_affinity_real_molecule():
     print(f"  Affinity report : {report}")
     print(f"  Total time      : {elapsed:.1f} ms")
     assert isinstance(score, float)
+    
+    # Generate the complete interactive HTML visualization
+    import numpy as np
+    protein_atoms = []
+    with open(PDB_PATH, 'r') as f:
+        for line in f:
+            if line.startswith("ATOM  ") or line.startswith("HETATM"):
+                try:
+                    protein_atoms.append((float(line[30:38]), float(line[38:46]), float(line[46:54])))
+                except:
+                    pass
+    
+    # Ligand coords are translated to pocket center in the engine
+    if len(aspirin.coords) > 0:
+        mol_center = np.mean(aspirin.coords, axis=0)
+        ligand_atoms = aspirin.coords + (np.array(POCKET_CENTER) - mol_center)
+    else:
+        ligand_atoms = []
+        
+    start_c = (POCKET_CENTER[0] - POCKET_RADIUS, POCKET_CENTER[1] - POCKET_RADIUS, POCKET_CENTER[2] - POCKET_RADIUS)
+    
+    # We need to access the sniper engine used inside the system. 
+    # Since we can't easily grab the local variable from the function, we'll re-instantiate it quickly just for the plot.
+    from key.nibble_bridge import NibbleEngine
+    vis_engine = NibbleEngine(dim_x=80, dim_y=80, dim_z=80, resolution=0.25)
+    vis_engine.load_pdb_pocket(PDB_PATH, POCKET_CENTER, POCKET_RADIUS, blur_radius=1.5)
+    
+    vis_engine.export_plotly_html(
+        'docking_complex.html', 
+        channel=0, 
+        isovalue=0.1, 
+        protein_atoms=protein_atoms, 
+        ligand_atoms=ligand_atoms, 
+        score=score,
+        start_coords=start_c
+    )
+    print("  Exported full complex to docking_complex.html")
+
+    # Generate the spatial convergence curve (RMSD-equivalent proof of docking)
+    print("  Running spatial convergence scan (21 steps x 3 axes)...")
+    vis_engine.backend.score_displacement_curve(
+        coords=ligand_atoms,
+        charges=aspirin.charges,
+        hydrophobicity=aspirin.hydrophobicity,
+        start_coords=start_c,
+        output_file='displacement_curve.html',
+        max_shift=5.0,
+        step_size=0.5
+    )
 
 
 def run():
