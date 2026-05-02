@@ -6,6 +6,7 @@ Implements "Negative Space Matrix Multiplication" for O(1) thermal-averaged dock
 Automatically falls back to a vectorized NumPy implementation if the optimized 
 C-native shared library cannot be loaded.
 """
+
 import ctypes
 import os
 import numpy as np
@@ -199,6 +200,78 @@ class NativeNibbleEngine:
         self._lib.nibble_free_grid(drug_ptr)
         return float(affinity)
 
+    def score_displacement_curve(self, coords, charges, hydrophobicity, start_coords,
+                                  output_file='displacement_curve.html',
+                                  max_shift=5.0, step_size=0.5):
+        """
+        Spatial Convergence Curve: validates docking geometry by scanning the ligand
+        along each axis and re-scoring at each displacement.
+
+        A real binding event produces a sharp energy well (peak at 0 displacement).
+        A non-binding molecule produces a flat or noisy curve.
+        This is the MD-RMSD equivalent for voxel-based docking.
+        """
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            print("Error: 'plotly' is required. Install with 'pip install plotly'")
+            return
+
+        coords = np.array(coords)
+        charges = np.array(charges)
+        hydrophobicity = np.array(hydrophobicity)
+
+        shifts = np.arange(-max_shift, max_shift + step_size * 0.5, step_size)
+        axis_labels = ['X displacement (A)', 'Y displacement (A)', 'Z displacement (A)']
+        colors = ['#7eb8a4', '#c4875a', '#8b9cc8']
+        results = []
+
+        for axis in range(3):
+            axis_scores = []
+            for shift in shifts:
+                shifted = coords.copy()
+                shifted[:, axis] += shift
+                s = self.project_molecule_data(shifted, charges, hydrophobicity, start_coords)
+                axis_scores.append(s)
+            results.append(axis_scores)
+
+        # Find the baseline (score at shift=0)
+        zero_idx = int(len(shifts) // 2)
+        baseline = results[0][zero_idx]
+
+        fig = go.Figure()
+        for axis in range(3):
+            fig.add_trace(go.Scatter(
+                x=shifts,
+                y=results[axis],
+                mode='lines+markers',
+                name=axis_labels[axis],
+                line=dict(color=colors[axis], width=2),
+                marker=dict(size=5)
+            ))
+
+        # Mark optimal position
+        fig.add_vline(
+            x=0.0, line_width=1, line_dash='dash', line_color='rgba(255,255,255,0.4)',
+            annotation_text='Optimal', annotation_position='top right',
+            annotation_font_color='rgba(255,255,255,0.6)'
+        )
+
+        fig.update_layout(
+            title=f'KeyBox Spatial Convergence Curve  |  Score at 0: {baseline:,.1f} (raw)',
+            xaxis_title='Ligand Displacement from Optimal Position (A)',
+            yaxis_title='Nibble Affinity Score (dimensionless Frobenius sum)',
+            plot_bgcolor='rgb(11, 12, 14)',
+            paper_bgcolor='rgb(11, 12, 14)',
+            font=dict(color='white'),
+            xaxis=dict(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.25)'),
+            yaxis=dict(gridcolor='rgba(255,255,255,0.08)'),
+            legend=dict(bgcolor='rgba(255,255,255,0.05)', bordercolor='rgba(255,255,255,0.1)')
+        )
+        fig.write_html(output_file)
+        print(f"  Displacement curve saved to: {output_file}")
+        return results
+
     def export_cube(self, filename: str, channel: int = CH_STERIC_DEMAND, atoms: Optional[List[Tuple[int, float, float, float]]] = None, start_coords: Tuple[float, float, float] = (0.0, 0.0, 0.0)):
         """
         Exports a specific voxel channel to a Gaussian Cube (.cube) file.
@@ -244,9 +317,10 @@ class NativeNibbleEngine:
                 line = "".join([f"{val:13.5E}" for val in chunk])
                 f.write(line + "\n")
 
-    def export_plotly_html(self, filename: str, channel: int = CH_STERIC_DEMAND, isovalue: float = 0.1):
+    def export_plotly_html(self, filename: str, channel: int = CH_STERIC_DEMAND, isovalue: float = 0.1, protein_atoms=None, ligand_atoms=None, score=None, start_coords=(0.0, 0.0, 0.0)):
         """
-        Exports a specific voxel channel as an interactive 3D HTML visualization using Plotly.
+        Exports a specific voxel channel as an interactive 3D HTML visualization using Plotly,
+        overlaying protein and ligand atoms if provided.
         """
         try:
             import plotly.graph_objects as go
@@ -260,13 +334,16 @@ class NativeNibbleEngine:
         arr = arr.reshape((self.dim_x, self.dim_y, self.dim_z, N_CHANNELS))
         field = arr[:, :, :, channel]
         
-        # Create coordinates
+        # Create coordinates aligned with the physical pocket (start_coords)
         X, Y, Z = np.mgrid[0:self.dim_x, 0:self.dim_y, 0:self.dim_z]
-        X = X * self.resolution
-        Y = Y * self.resolution
-        Z = Z * self.resolution
+        X = X * self.resolution + start_coords[0]
+        Y = Y * self.resolution + start_coords[1]
+        Z = Z * self.resolution + start_coords[2]
         
-        fig = go.Figure(data=go.Isosurface(
+        data = []
+        
+        # 1. The Voxel Isosurface (Translucent Cloud)
+        data.append(go.Isosurface(
             x=X.flatten(),
             y=Y.flatten(),
             z=Z.flatten(),
@@ -275,12 +352,46 @@ class NativeNibbleEngine:
             isomax=field.max(),
             surface_count=3,
             colorscale='Viridis',
+            opacity=0.3, # Make it translucent so we can see atoms inside
             caps=dict(x_show=False, y_show=False)
         ))
         
+        # 2. Protein Atoms
+        if protein_atoms:
+            px = [a[0] for a in protein_atoms]
+            py = [a[1] for a in protein_atoms]
+            pz = [a[2] for a in protein_atoms]
+            data.append(go.Scatter3d(
+                x=px, y=py, z=pz,
+                mode='markers',
+                marker=dict(size=4, color='lightgrey', opacity=0.8),
+                name='Protein'
+            ))
+            
+        # 3. Ligand Atoms
+        if ligand_atoms is not None and len(ligand_atoms) > 0:
+            lx = [a[0] for a in ligand_atoms]
+            ly = [a[1] for a in ligand_atoms]
+            lz = [a[2] for a in ligand_atoms]
+            data.append(go.Scatter3d(
+                x=lx, y=ly, z=lz,
+                mode='markers',
+                marker=dict(size=8, color='red', symbol='cross'),
+                name='Ligand'
+            ))
+            
+        fig = go.Figure(data=data)
+        
+        title_text = f"KeyBox Docking Viewer | Channel {channel}"
+        if score is not None:
+            title_text += f" | Affinity Score: {score:,.2f}"
+            
         fig.update_layout(
-            title=f"NibbleEngine Channel {channel}",
-            scene=dict(xaxis_title='X (A)', yaxis_title='Y (A)', zaxis_title='Z (A)')
+            title=title_text,
+            scene=dict(xaxis_title='X (A)', yaxis_title='Y (A)', zaxis_title='Z (A)'),
+            plot_bgcolor='rgb(11, 12, 14)',
+            paper_bgcolor='rgb(11, 12, 14)',
+            font=dict(color='white')
         )
         fig.write_html(filename)
 
@@ -386,8 +497,8 @@ class NibbleEngine:
         else:
             print(" Warning: export_cube not implemented for NumPy-Fallback backend.\ ")
 
-    def export_plotly_html(self, filename: str, channel: int = 0, isovalue: float = 0.1):
+    def export_plotly_html(self, filename: str, channel: int = 0, isovalue: float = 0.1, protein_atoms=None, ligand_atoms=None, score=None, start_coords=(0.0, 0.0, 0.0)):
         if hasattr(self.backend, 'export_plotly_html'):
-            self.backend.export_plotly_html(filename, channel, isovalue)
+            self.backend.export_plotly_html(filename, channel, isovalue, protein_atoms, ligand_atoms, score, start_coords)
         else:
             print(" Warning: export_plotly_html not implemented for NumPy backend.\ ")
