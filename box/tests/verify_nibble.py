@@ -2,8 +2,8 @@
 verify_nibble.py
 End-to-end verification of the Nibble docking engine.
 Uses a real aspirin molecule created from SMILES via the KeyBox designer.
-No mocks anywhere.
 """
+
 import sys
 import os
 import time
@@ -49,6 +49,14 @@ def test_sniper_phase():
     elapsed = (time.perf_counter() - t0) * 1e3
     assert atoms > 0
     print(f"  Sniper  pocket : {atoms} atoms, loaded in {elapsed:.1f} ms")
+    
+    # Export the high-resolution pocket for visualization
+    start_c = (POCKET_CENTER[0] - POCKET_RADIUS, POCKET_CENTER[1] - POCKET_RADIUS, POCKET_CENTER[2] - POCKET_RADIUS)
+    engine.export_cube('sniper_steric.cube', channel=0, start_coords=start_c)
+    print("  Exported sniper_steric.cube")
+    engine.export_plotly_html('sniper_steric.html', channel=0, isovalue=0.1)
+    print("  Exported sniper_steric.html")
+    
     return engine
 
 
