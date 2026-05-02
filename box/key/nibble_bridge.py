@@ -199,6 +199,91 @@ class NativeNibbleEngine:
         self._lib.nibble_free_grid(drug_ptr)
         return float(affinity)
 
+    def export_cube(self, filename: str, channel: int = CH_STERIC_DEMAND, atoms: Optional[List[Tuple[int, float, float, float]]] = None, start_coords: Tuple[float, float, float] = (0.0, 0.0, 0.0)):
+        """
+        Exports a specific voxel channel to a Gaussian Cube (.cube) file.
+        This allows 3D isosurface visualization in tools like PyMOL, VMD, or UCSF ChimeraX.
+        
+        Args:
+            filename: Output path (e.g., 'pocket_steric.cube')
+            channel: Which channel to export (e.g., CH_STERIC_DEMAND)
+            atoms: Optional list of (atomic_num, x, y, z) to include inside the visualization
+            start_coords: The physical (x,y,z) origin of the grid
+        """
+        BOHR = 1.8897259886 # Conversion from Angstroms to Bohr units
+        res = self.resolution * BOHR
+        origin = [c * BOHR for c in start_coords]
+        
+        n_atoms = len(atoms) if atoms else 0
+        
+        # Extract grid data into a numpy array
+        n = self.dim_x * self.dim_y * self.dim_z * N_CHANNELS
+        arr = np.ctypeslib.as_array(self.grid_ptr.contents.data, shape=(n,))
+        arr = arr.reshape((self.dim_x, self.dim_y, self.dim_z, N_CHANNELS))
+            
+        field = arr[:, :, :, channel]
+        
+        with open(filename, 'w') as f:
+            f.write("KeyBox NibbleEngine Export\n")
+            f.write(f"Channel: {channel}\n")
+            f.write(f"{n_atoms:5d} {origin[0]:12.6f} {origin[1]:12.6f} {origin[2]:12.6f}\n")
+            f.write(f"{self.dim_x:5d} {res:12.6f} 0.000000 0.000000\n")
+            f.write(f"{self.dim_y:5d} 0.000000 {res:12.6f} 0.000000\n")
+            f.write(f"{self.dim_z:5d} 0.000000 0.000000 {res:12.6f}\n")
+            
+            if atoms:
+                for atomic_num, x, y, z in atoms:
+                    # Write: atomic_num, charge (0.0), x, y, z
+                    f.write(f"{atomic_num:5d} 0.000000 {x*BOHR:12.6f} {y*BOHR:12.6f} {z*BOHR:12.6f}\n")
+            
+            # Format the output grid exactly as specified by the Gaussian cube standard
+            # It loops x, then y, then z. Max 6 values per line.
+            flat_field = field.flatten() # By default flattens in C order (x, y, z)
+            for i in range(0, len(flat_field), 6):
+                chunk = flat_field[i:i+6]
+                line = "".join([f"{val:13.5E}" for val in chunk])
+                f.write(line + "\n")
+
+    def export_plotly_html(self, filename: str, channel: int = CH_STERIC_DEMAND, isovalue: float = 0.1):
+        """
+        Exports a specific voxel channel as an interactive 3D HTML visualization using Plotly.
+        """
+        try:
+            import plotly.graph_objects as go
+        except ImportError:
+            print("Error: 'plotly' is required for export_plotly_html. Install with 'pip install plotly'")
+            return
+            
+        # Extract grid data
+        n = self.dim_x * self.dim_y * self.dim_z * N_CHANNELS
+        arr = np.ctypeslib.as_array(self.grid_ptr.contents.data, shape=(n,))
+        arr = arr.reshape((self.dim_x, self.dim_y, self.dim_z, N_CHANNELS))
+        field = arr[:, :, :, channel]
+        
+        # Create coordinates
+        X, Y, Z = np.mgrid[0:self.dim_x, 0:self.dim_y, 0:self.dim_z]
+        X = X * self.resolution
+        Y = Y * self.resolution
+        Z = Z * self.resolution
+        
+        fig = go.Figure(data=go.Isosurface(
+            x=X.flatten(),
+            y=Y.flatten(),
+            z=Z.flatten(),
+            value=field.flatten(),
+            isomin=isovalue,
+            isomax=field.max(),
+            surface_count=3,
+            colorscale='Viridis',
+            caps=dict(x_show=False, y_show=False)
+        ))
+        
+        fig.update_layout(
+            title=f"NibbleEngine Channel {channel}",
+            scene=dict(xaxis_title='X (A)', yaxis_title='Y (A)', zaxis_title='Z (A)')
+        )
+        fig.write_html(filename)
+
 # --- Main Interface ---
 class NibbleEngine:
     """
@@ -294,3 +379,15 @@ class NibbleEngine:
                         1.5, ch_vals
                     )
             return self.backend.compute_affinity(drug_grid)
+
+    def export_cube(self, filename: str, channel: int = 0, atoms=None, start_coords=(0.0, 0.0, 0.0)):
+        if hasattr(self.backend, 'export_cube'):
+            self.backend.export_cube(filename, channel, atoms, start_coords)
+        else:
+            print(" Warning: export_cube not implemented for NumPy-Fallback backend.\ ")
+
+    def export_plotly_html(self, filename: str, channel: int = 0, isovalue: float = 0.1):
+        if hasattr(self.backend, 'export_plotly_html'):
+            self.backend.export_plotly_html(filename, channel, isovalue)
+        else:
+            print(" Warning: export_plotly_html not implemented for NumPy backend.\ ")
