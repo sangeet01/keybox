@@ -1,3 +1,11 @@
+"""
+Nibble Bridge (C-Native Docking Engine Interface)
+-------------------------------------------------
+Provides the Python ctypes bindings for the high-performance Nibble C-backend. 
+Implements "Negative Space Matrix Multiplication" for O(1) thermal-averaged docking.
+Automatically falls back to a vectorized NumPy implementation if the optimized 
+C-native shared library cannot be loaded.
+"""
 import ctypes
 import os
 import numpy as np
@@ -219,7 +227,7 @@ class NibbleEngine:
         if cls._tried_load: return
         cls._tried_load = True
         
-        lib_name = 'nibble.dll' if os.name == 'nt' else 'libnibble.so'
+        lib_name = 'nibble.dll' if os.name == 'nt' else ('libnibble.so' if os.path.exists(os.path.join(os.path.dirname(__file__), '..', 'nibble', 'libnibble.so')) else 'nibble.so')
         lib_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'nibble', lib_name))
         
         try:
