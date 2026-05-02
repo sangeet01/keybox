@@ -1,3 +1,11 @@
+"""
+KeyBox Engine (v0.9.3 - Modularized)
+------------------------------------
+This module serves as the primary orchestrator for the KeyBox voxel physics engine.
+It handles multi-molecule superposition, physical field projection, and routes computations
+to specialized modules (thermodynamics, degradation mechanisms, and the Nibble docking engine).
+It evaluates both API-excipient compatibility and structural protein-ligand docking affinity.
+"""
 import numpy as np
 from typing import List, Dict, Tuple, Optional, Union, Any
 from scipy import ndimage
@@ -394,6 +402,13 @@ class KeyBoxSystem:
         # 3. Project current drug population and calculate affinity
         # Start coords are center - radius for all axes
         start_coords = (center[0] - radius, center[1] - radius, center[2] - radius)
+        
+        # Translate molecules to the pocket center to avoid out-of-bounds projection
+        for mol in self.apis + self.excipients:
+            if len(mol.coords) > 0:
+                mol_center = np.mean(mol.coords, axis=0)
+                mol.coords = mol.coords + (np.array(center) - mol_center)
+                
         affinity = nibble.project_molecule(self, start_coords)
         
         return affinity, f"Docking score: {affinity:.2f} (from {atoms} pocket atoms)"
