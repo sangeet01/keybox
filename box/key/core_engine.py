@@ -186,6 +186,12 @@ class KeyBoxSystem:
         blur_base = 1.2 + max(0.0, (T_C - 20.0) / 40.0)
         start_coords = (center[0] - radius, center[1] - radius, center[2] - radius)
 
+        # Translate molecules to the pocket center to avoid out-of-bounds projection
+        for mol in self.apis + self.excipients:
+            if len(mol.coords) > 0:
+                mol_center = np.mean(mol.coords, axis=0)
+                mol.coords = mol.coords + (np.array(center) - mol_center)
+
         # Phase I — Coarse Broadsword: 1.0A, box = (2*radius / 1.0) voxels per side
         box_c = max(10, int(2 * radius / 1.0))
         coarse = NibbleEngine(dim_x=box_c, dim_y=box_c, dim_z=box_c, resolution=1.0)
