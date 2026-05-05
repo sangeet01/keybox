@@ -4,11 +4,12 @@
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0 + Commons Clause](https://img.shields.io/badge/license-Apache%202.0%20%2B%20Commons%20Clause-orange.svg)](LICENSE)
-[![Version: 0.8.1](https://img.shields.io/badge/version-0.8.1-brightgreen.svg)]()
+[![Version: 0.8.0](https://img.shields.io/badge/version-0.8.0-brightgreen.svg)]()
 
 <p align="center">
   <img src="artifacts/logo.png" alt="KeyBox Logo" width="100%">
 </p>
+
 
 ---
 
