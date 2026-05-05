@@ -6,7 +6,6 @@ Implements "Negative Space Matrix Multiplication" for O(1) thermal-averaged dock
 Automatically falls back to a vectorized NumPy implementation if the optimized 
 C-native shared library cannot be loaded.
 """
-
 import ctypes
 import os
 import numpy as np
@@ -14,18 +13,24 @@ from typing import Tuple, List, Optional, Dict
 import time
 
 # --- C Constants ---
-N_CHANNELS = 11
-CH_STERIC_DEMAND = 0
-CH_ELEC_DEMAND = 1
-CH_HBA_DEMAND = 2
-CH_HBD_DEMAND = 3
-CH_LIPO_DEMAND = 4
-CH_AROM_DEMAND = 5
-CH_METAL_DEMAND = 6
-CH_CATION_DEMAND = 7
-CH_ANION_DEMAND = 8
-CH_PHOBIC_CORE = 9
-CH_SOLVENT_EXPO = 10
+N_CHANNELS = 16
+CH_STERIC_DEMAND    = 0
+CH_ELEC_DEMAND      = 1
+CH_HBA_DEMAND       = 2
+CH_HBD_DEMAND       = 3
+CH_LIPO_DEMAND      = 4
+CH_AROM_DEMAND      = 5
+CH_METAL_DEMAND     = 6
+CH_CATION_DEMAND    = 7
+CH_ANION_DEMAND     = 8
+CH_PHOBIC_CORE      = 9
+CH_SOLVENT_EXPO     = 10
+# Gap Closure channels (V4)
+CH_FLEXIBILITY      = 11
+CH_NUCLEOPHILICITY  = 12
+CH_ELECTROPHILICITY = 13
+CH_WATER_CONSERVED  = 14
+CH_WATER_DYNAMIC    = 15
 
 # --- C Structure Definitions ---
 class NibbleGridStruct(ctypes.Structure):
@@ -35,6 +40,17 @@ class NibbleGridStruct(ctypes.Structure):
         ("dim_z", ctypes.c_int),
         ("resolution", ctypes.c_float),
         ("data", ctypes.POINTER(ctypes.c_float))
+    ]
+
+class NibbleMolStruct(ctypes.Structure):
+    _fields_ = [
+        ("cx", ctypes.c_float), ("cy", ctypes.c_float), ("cz", ctypes.c_float),
+        ("vx", ctypes.c_float), ("vy", ctypes.c_float), ("vz", ctypes.c_float),
+        ("qw", ctypes.c_float), ("qx", ctypes.c_float), ("qy", ctypes.c_float), ("qz", ctypes.c_float),
+        ("wx", ctypes.c_float), ("wy", ctypes.c_float), ("wz", ctypes.c_float),
+        ("n_atoms", ctypes.c_int),
+        ("local_coords", ctypes.POINTER(ctypes.c_float)),
+        ("ch_vals", ctypes.POINTER(ctypes.c_float))
     ]
 
 # --- NumPy Fallback Implementation ---
@@ -199,6 +215,128 @@ class NativeNibbleEngine:
         affinity = self._lib.nibble_compute_affinity(self.grid_ptr, drug_ptr)
         self._lib.nibble_free_grid(drug_ptr)
         return float(affinity)
+
+    # --- Gap Closure: Water Network ---
+
+    def compute_water_network(self, delta_G_bulk=2.0, kT=0.593):
+        """Compute and store CH_WATER_DYNAMIC occupancy field in the protein grid."""
+        self._lib.nibble_compute_water_network(self.grid_ptr, ctypes.c_float(delta_G_bulk),
+                                               ctypes.c_float(kT))
+
+    def affinity_full(self, drug_engine, delta_G_bulk=2.0):
+        """Frobenius affinity plus water-bridge bonus minus desolvation penalty."""
+        return float(self._lib.nibble_compute_affinity_full(
+            self.grid_ptr, drug_engine.grid_ptr, ctypes.c_float(delta_G_bulk)
+        ))
+
+    # --- Gap Closure: Fukui Covalent Channels ---
+
+    def project_fukui(self, coords, partial_charges, blur_radius=1.5):
+        """Project Fukui nucleophilicity/electrophilicity channels from partial charges."""
+        coords_arr = np.array(coords, dtype=np.float32).flatten()
+        charges_arr = np.array(partial_charges, dtype=np.float32)
+        n = len(charges_arr)
+        self._lib.nibble_project_fukui(
+            self.grid_ptr, n,
+            coords_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            charges_arr.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            ctypes.c_float(blur_radius)
+        )
+
+    def check_covalent(self, drug_engine, threshold=0.5):
+        """Returns linear voxel index of covalent event site, or -1 if none."""
+        return int(self._lib.nibble_check_covalent(
+            self.grid_ptr, drug_engine.grid_ptr, ctypes.c_float(threshold)
+        ))
+
+    # --- Tier 3: Gradient ---
+
+    def gradient_at(self, x, y, z):
+        """Returns (gx, gy, gz) gradient of affinity field at position (x,y,z)."""
+        gx = ctypes.c_float(0)
+        gy = ctypes.c_float(0)
+        gz = ctypes.c_float(0)
+        self._lib.nibble_gradient(
+            self.grid_ptr, ctypes.c_float(x), ctypes.c_float(y), ctypes.c_float(z),
+            ctypes.byref(gx), ctypes.byref(gy), ctypes.byref(gz)
+        )
+        return float(gx.value), float(gy.value), float(gz.value)
+
+    def run_trajectory(self, coords, charges, hydrophobicity, start_coords, 
+                       n_steps=1000, dt=0.002, gamma=1.0, kT=0.593):
+        """Runs the Langevin trajectory entirely in C for maximum performance."""
+        n_atoms = len(coords)
+        local_coords = np.zeros((n_atoms, 3), dtype=np.float32)
+        ch_vals = np.zeros((n_atoms, N_CHANNELS), dtype=np.float32)
+        
+        for i in range(n_atoms):
+            local_coords[i][0] = coords[i][0] - start_coords[0]
+            local_coords[i][1] = coords[i][1] - start_coords[1]
+            local_coords[i][2] = coords[i][2] - start_coords[2]
+            
+            ch_vals[i][CH_STERIC_DEMAND] = 1.0
+            ch_vals[i][CH_ELEC_DEMAND] = charges[i]
+            ch_vals[i][CH_LIPO_DEMAND] = hydrophobicity[i]
+
+        mol_ptr = self._lib.nibble_mol_create(
+            n_atoms, 
+            local_coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            ch_vals.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        )
+        
+        scratch = self._lib.nibble_create_grid(self.dim_x, self.dim_y, self.dim_z, self.resolution)
+        
+        bcx = ctypes.c_float()
+        bcy = ctypes.c_float()
+        bcz = ctypes.c_float()
+        
+        best_score = self._lib.nibble_trajectory(
+            mol_ptr, self.grid_ptr, scratch,
+            ctypes.c_int(n_steps), ctypes.c_float(dt), ctypes.c_float(gamma), ctypes.c_float(kT),
+            ctypes.byref(bcx), ctypes.byref(bcy), ctypes.byref(bcz)
+        )
+        
+        self._lib.nibble_free_grid(scratch)
+        self._lib.nibble_mol_free(mol_ptr)
+        
+        return float(best_score), (float(bcx.value), float(bcy.value), float(bcz.value))
+
+    # --- Tier 4: Induced Fit ---
+
+    def thermal_breathe(self, sigma_delta):
+        """Apply thermal breathing (Mechanism 1): time-varying Gaussian blur."""
+        self._lib.nibble_thermal_breathe(self.grid_ptr, ctypes.c_float(sigma_delta))
+
+    def elastic_deform(self, ligand_engine, elasticity_scale=0.2):
+        """Apply elastic deformation from ligand contact pressure (Mechanism 2)."""
+        self._lib.nibble_elastic_deform(
+            self.grid_ptr, ligand_engine.grid_ptr, ctypes.c_float(elasticity_scale)
+        )
+
+    def interpolate_from(self, grid_open_engine, grid_closed_engine, alpha):
+        """Interpolate this grid between open and closed conformers (Mechanism 3)."""
+        self._lib.nibble_interpolate_grids(
+            self.grid_ptr, grid_open_engine.grid_ptr,
+            grid_closed_engine.grid_ptr, ctypes.c_float(alpha)
+        )
+
+    def pocket_occupancy(self, ligand_engine, threshold=0.1):
+        """Returns fractional pocket occupancy q from ligand grid overlap."""
+        return float(self._lib.nibble_pocket_occupancy(
+            self.grid_ptr, ligand_engine.grid_ptr, ctypes.c_float(threshold)
+        ))
+
+    def tier4_frame_update(self, grid_open_engine, grid_closed_engine,
+                            ligand_engine, sigma_delta=0.05, elasticity_scale=0.2):
+        """Full Tier 4 frame update: interpolate + breathe + elastic deform."""
+        self._lib.nibble_tier4_frame_update(
+            self.grid_ptr,
+            grid_open_engine.grid_ptr,
+            grid_closed_engine.grid_ptr,
+            ligand_engine.grid_ptr,
+            ctypes.c_float(sigma_delta),
+            ctypes.c_float(elasticity_scale)
+        )
 
     def score_displacement_curve(self, coords, charges, hydrophobicity, start_coords,
                                   output_file='displacement_curve.html',
@@ -395,6 +533,68 @@ class NativeNibbleEngine:
         )
         fig.write_html(filename)
 
+class LangevinMol:
+    """Stateful C-native molecule for Langevin trajectories."""
+    def __init__(self, engine, coords, charges, hydrophobicity, start_coords):
+        self.engine = engine
+        self._lib = engine._lib
+        n_atoms = len(coords)
+        
+        # Compute absolute center of mass
+        cx_abs = sum(c[0] for c in coords) / n_atoms
+        cy_abs = sum(c[1] for c in coords) / n_atoms
+        cz_abs = sum(c[2] for c in coords) / n_atoms
+        
+        # Grid coordinates for center of mass
+        cx_grid = cx_abs - start_coords[0]
+        cy_grid = cy_abs - start_coords[1]
+        cz_grid = cz_abs - start_coords[2]
+
+        local_coords = np.zeros((n_atoms, 3), dtype=np.float32)
+        ch_vals = np.zeros((n_atoms, N_CHANNELS), dtype=np.float32)
+        
+        for i in range(n_atoms):
+            local_coords[i][0] = (coords[i][0] - start_coords[0]) - cx_grid
+            local_coords[i][1] = (coords[i][1] - start_coords[1]) - cy_grid
+            local_coords[i][2] = (coords[i][2] - start_coords[2]) - cz_grid
+            
+            ch_vals[i][CH_STERIC_DEMAND] = 1.0
+            ch_vals[i][CH_ELEC_DEMAND] = charges[i]
+            ch_vals[i][CH_LIPO_DEMAND] = hydrophobicity[i]
+
+        self.mol_ptr = self._lib.nibble_mol_create(
+            n_atoms, 
+            local_coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            ch_vals.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        )
+        
+        self.mol_ptr.contents.cx = cx_grid
+        self.mol_ptr.contents.cy = cy_grid
+        self.mol_ptr.contents.cz = cz_grid
+
+    def __del__(self):
+        if hasattr(self, 'mol_ptr') and self.mol_ptr:
+            self._lib.nibble_mol_free(self.mol_ptr)
+
+    def run_trajectory(self, n_steps=10, dt=0.002, gamma=1.0, kT=0.593):
+        scratch = self._lib.nibble_create_grid(self.engine.dim_x, self.engine.dim_y, self.engine.dim_z, self.engine.resolution)
+        
+        bcx = ctypes.c_float()
+        bcy = ctypes.c_float()
+        bcz = ctypes.c_float()
+        
+        best_score = self._lib.nibble_trajectory(
+            self.mol_ptr, self.engine.grid_ptr, scratch,
+            ctypes.c_int(n_steps), ctypes.c_float(dt), ctypes.c_float(gamma), ctypes.c_float(kT),
+            ctypes.byref(bcx), ctypes.byref(bcy), ctypes.byref(bcz)
+        )
+        
+        self._lib.nibble_free_grid(scratch)
+        return float(best_score), (float(bcx.value), float(bcy.value), float(bcz.value))
+
+    def project_to_grid(self, drug_engine):
+        self._lib.nibble_mol_project(self.mol_ptr, drug_engine.grid_ptr)
+
 # --- Main Interface ---
 class NibbleEngine:
     """
@@ -456,6 +656,60 @@ class NibbleEngine:
                 ctypes.POINTER(NibbleGridStruct), ctypes.c_float, ctypes.c_float, ctypes.c_float,
                 ctypes.c_float, ctypes.POINTER(ctypes.c_float)
             ]
+
+            # --- Tier 3: Langevin Trajectory ---
+            _G = ctypes.POINTER(NibbleGridStruct)
+            _F = ctypes.c_float
+            _PF = ctypes.POINTER(ctypes.c_float)
+
+            cls._lib.nibble_gradient.argtypes = [_G, _F, _F, _F, _PF, _PF, _PF]
+            cls._lib.nibble_gradient.restype = None
+
+            cls._lib.nibble_compute_water_network.argtypes = [_G, _F, _F]
+            cls._lib.nibble_compute_water_network.restype = None
+
+            cls._lib.nibble_compute_affinity_full.argtypes = [_G, _G, _F]
+            cls._lib.nibble_compute_affinity_full.restype = ctypes.c_float
+
+            cls._lib.nibble_desolvation_penalty.argtypes = [_G, _G, _F, _F]
+            cls._lib.nibble_desolvation_penalty.restype = ctypes.c_float
+
+            cls._lib.nibble_project_fukui.argtypes = [
+                _G, ctypes.c_int, _PF, _PF, _F
+            ]
+            cls._lib.nibble_project_fukui.restype = None
+
+            cls._lib.nibble_check_covalent.argtypes = [_G, _G, _F]
+            cls._lib.nibble_check_covalent.restype = ctypes.c_int
+
+            _MOL = ctypes.POINTER(NibbleMolStruct)
+            cls._lib.nibble_mol_create.argtypes = [ctypes.c_int, _PF, _PF]
+            cls._lib.nibble_mol_create.restype = _MOL
+
+            cls._lib.nibble_mol_free.argtypes = [_MOL]
+            cls._lib.nibble_mol_free.restype = None
+
+            cls._lib.nibble_trajectory.argtypes = [_MOL, _G, _G, ctypes.c_int, _F, _F, _F, _PF, _PF, _PF]
+            cls._lib.nibble_trajectory.restype = ctypes.c_float
+            
+            cls._lib.nibble_mol_project.argtypes = [_MOL, _G]
+            cls._lib.nibble_mol_project.restype = None
+
+            # --- Tier 4: Induced Fit ---
+            cls._lib.nibble_thermal_breathe.argtypes = [_G, _F]
+            cls._lib.nibble_thermal_breathe.restype = None
+
+            cls._lib.nibble_elastic_deform.argtypes = [_G, _G, _F]
+            cls._lib.nibble_elastic_deform.restype = None
+
+            cls._lib.nibble_interpolate_grids.argtypes = [_G, _G, _G, _F]
+            cls._lib.nibble_interpolate_grids.restype = None
+
+            cls._lib.nibble_pocket_occupancy.argtypes = [_G, _G, _F]
+            cls._lib.nibble_pocket_occupancy.restype = ctypes.c_float
+
+            cls._lib.nibble_tier4_frame_update.argtypes = [_G, _G, _G, _G, _F, _F]
+            cls._lib.nibble_tier4_frame_update.restype = None
         except Exception:
             cls._lib = None
 
