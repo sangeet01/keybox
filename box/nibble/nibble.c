@@ -1,5 +1,5 @@
 /*
- * nibble.c (V3 - Production)
+ * nibble.c (V4 - Tier 3/4 + Gap Closure)
  * Negative Space Matrix Multiplication Docking Engine
  *
  * Architecture (theory.txt):
@@ -124,6 +124,12 @@ float nibble_compute_affinity(const NibbleGrid *pocket, const NibbleGrid *drug) 
             score += pp[8]  * dp[8];    /* anionic                  */
             score += pp[9]  * dp[9];    /* buried hydrophobic core  */
             score += pp[10] * dp[10];   /* solvent exposure         */
+            /* Gap Closure channels */
+            score += pp[11] * dp[11];   /* flexibility              */
+            score += pp[12] * dp[12];   /* nucleophilicity          */
+            score += pp[13] * dp[13];   /* electrophilicity         */
+            score += pp[14] * dp[14];   /* conserved water          */
+            score += pp[15] * dp[15];   /* dynamic water            */
         }
         pp += N_CHANNELS;
         dp += N_CHANNELS;
@@ -232,11 +238,38 @@ int nibble_load_pdb_pocket(NibbleGrid *g, const char *pdb_path,
             e = (line[12] != ' ') ? line[12] : line[13];
         }
 
-        /* Build the complementary demand vector.
-         * Steric: -1.0 marks protein wall (projection drives void to 0).
-         * Other channels encode what the drug must supply to bind here. */
+        /* Build the complementary demand vector. */
         float d[N_CHANNELS] = {0.0f};
-        d[CH_STERIC_DEMAND] = -1.0f;   /* always: protein atom = wall */
+        d[CH_STERIC_DEMAND] = -1.0f; /* always: protein atom = wall */
+
+        /* Flexibility channel from residue type (Proline=rigid, Gly=flexible) */
+        /* Default flexibility is 0.3 (medium). Override per residue below. */
+        d[CH_FLEXIBILITY] = 0.3f;
+
+        /* Read residue name from columns 17-20 (0-indexed 17-19) for flexibility */
+        if (len > 19) {
+            char res3[4] = {line[17], line[18], line[19], '\0'};
+            if (strstr(res3, "GLY") || strstr(res3, "ALA"))
+                d[CH_FLEXIBILITY] = 0.9f; /* very flexible */
+            else if (strstr(res3, "PRO"))
+                d[CH_FLEXIBILITY] = 0.05f; /* rigid */
+            else if (strstr(res3, "VAL") || strstr(res3, "LEU") || strstr(res3, "ILE"))
+                d[CH_FLEXIBILITY] = 0.15f;
+        }
+
+        /* HOH water records get projected into CH_WATER_CONSERVED */
+        if (is_hetatm && len > 19) {
+            char res3[4] = {line[17], line[18], line[19], '\0'};
+            if (strstr(res3, "HOH") || strstr(res3, "WAT")) {
+                float wd[N_CHANNELS] = {0};
+                wd[CH_HBA_DEMAND]      = 1.0f;
+                wd[CH_HBD_DEMAND]      = 1.0f;
+                wd[CH_WATER_CONSERVED] = 1.0f;
+                nibble_project_atom(g, ax - sx, ay - sy, az - sz, 1.4f, wd);
+                n_atoms++;
+                continue; /* skip the normal element projection below */
+            }
+        }
 
         switch (e) {
             case 'O':
