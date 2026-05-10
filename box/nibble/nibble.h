@@ -103,7 +103,24 @@ void nibble_mol_project(const NibbleMol *mol, NibbleGrid *drug_grid);
 float nibble_mol_score(const NibbleMol *mol, const NibbleGrid *pocket,
                        NibbleGrid *scratch_drug);
 
-/* Single Langevin integration step (translational only for V4) */
+/* Quaternion-based rotation utilities */
+void   nibble_quat_normalize(float *qw, float *qx, float *qy, float *qz);
+void   nibble_quat_rotate_point(float x, float y, float z,
+                                 float qw, float qx, float qy, float qz,
+                                 float *rx, float *ry, float *rz);
+void   nibble_quat_integrate(float *qw, float *qx, float *qy, float *qz,
+                              float wx, float wy, float wz, float dt);
+
+/* Inertia tensor and torque computation */
+void   nibble_compute_inertia_tensor(const NibbleMol *mol,
+                                      float I[3][3]);
+void   nibble_compute_body_torque(const NibbleMol *mol, const NibbleGrid *pocket,
+                                   float *tau_x, float *tau_y, float *tau_z);
+
+/* Apply quaternion rotation to all atoms in molecule */
+void   nibble_rotate_mol_atoms(NibbleMol *mol);
+
+/* Single Langevin integration step (translational + rotational) */
 void nibble_langevin_step(NibbleMol *mol, const NibbleGrid *pocket,
                            NibbleGrid *scratch_drug,
                            float dt, float gamma, float kT,

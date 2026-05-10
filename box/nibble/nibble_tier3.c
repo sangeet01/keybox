@@ -103,6 +103,129 @@ void nibble_gradient(const NibbleGrid *pocket, float x, float y, float z,
       (2.0f * delta);
 }
 
+/* -------------------------------------------------------------------
+ * Quaternion utilities for rotational dynamics
+ * ------------------------------------------------------------------- */
+
+/* Normalize a quaternion to unit length */
+void nibble_quat_normalize(float *qw, float *qx, float *qy, float *qz) {
+  float norm = sqrtf(*qw * *qw + *qx * *qx + *qy * *qy + *qz * *qz);
+  if (norm < 1e-9f) norm = 1.0f;
+  float inv_norm = 1.0f / norm;
+  *qw *= inv_norm;
+  *qx *= inv_norm;
+  *qy *= inv_norm;
+  *qz *= inv_norm;
+}
+
+/* Rotate a 3D point using a quaternion (q is unit quaternion) */
+void nibble_quat_rotate_point(float x, float y, float z,
+                               float qw, float qx, float qy, float qz,
+                               float *rx, float *ry, float *rz) {
+  /* p' = q * p * q^-1, where q^-1 = conjugate for unit quaternion */
+  float qw_conj = qw;
+  float qx_conj = -qx;
+  float qy_conj = -qy;
+  float qz_conj = -qz;
+
+  /* q * p */
+  float p1w = -qx * x - qy * y - qz * z;
+  float p1x = qw * x + qy * z - qz * y;
+  float p1y = qw * y + qz * x - qx * z;
+  float p1z = qw * z + qx * y - qy * x;
+
+  /* (q*p) * q^-1 */
+  *rx = p1x * qw_conj + p1w * qx_conj + p1y * qz_conj - p1z * qy_conj;
+  *ry = p1y * qw_conj + p1w * qy_conj + p1z * qx_conj - p1x * qz_conj;
+  *rz = p1z * qw_conj + p1w * qz_conj + p1x * qy_conj - p1y * qx_conj;
+}
+
+/* Integrate quaternion using angular velocity (Euler integration) */
+void nibble_quat_integrate(float *qw, float *qx, float *qy, float *qz,
+                            float wx, float wy, float wz, float dt) {
+  /* dq/dt = 0.5 * Omega(w) * q */
+  float dqw = 0.5f * (-wx * *qx - wy * *qy - wz * *qz);
+  float dqx = 0.5f * (wx * *qw + wy * *qz - wz * *qy);
+  float dqy = 0.5f * (wy * *qw + wz * *qx - wx * *qz);
+  float dqz = 0.5f * (wz * *qw + wx * *qy - wy * *qx);
+
+  *qw += dqw * dt;
+  *qx += dqx * dt;
+  *qy += dqy * dt;
+  *qz += dqz * dt;
+  
+  nibble_quat_normalize(qw, qx, qy, qz);
+}
+
+/* Compute 3x3 inertia tensor from atom positions */
+void nibble_compute_inertia_tensor(const NibbleMol *mol, float I[3][3]) {
+  /* Initialize to zero */
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      I[i][j] = 0.0f;
+
+  /* Assume unit mass per atom */
+  for (int a = 0; a < mol->n_atoms; ++a) {
+    float x = mol->local_coords[a * 3 + 0];
+    float y = mol->local_coords[a * 3 + 1];
+    float z = mol->local_coords[a * 3 + 2];
+
+    I[0][0] += y * y + z * z;    /* Ixx */
+    I[1][1] += x * x + z * z;    /* Iyy */
+    I[2][2] += x * x + y * y;    /* Izz */
+    I[0][1] -= x * y;            /* Ixy */
+    I[0][2] -= x * z;            /* Ixz */
+    I[1][2] -= y * z;            /* Iyz */
+  }
+  
+  I[1][0] = I[0][1];
+  I[2][0] = I[0][2];
+  I[2][1] = I[1][2];
+}
+
+/* Compute body torque from per-atom gradients */
+void nibble_compute_body_torque(const NibbleMol *mol, const NibbleGrid *pocket,
+                                 float *tau_x, float *tau_y, float *tau_z) {
+  *tau_x = 0.0f;
+  *tau_y = 0.0f;
+  *tau_z = 0.0f;
+
+  /* Sum torques: tau = r x F for each atom */
+  for (int a = 0; a < mol->n_atoms; ++a) {
+    float atom_x = mol->cx + mol->local_coords[a * 3 + 0];
+    float atom_y = mol->cy + mol->local_coords[a * 3 + 1];
+    float atom_z = mol->cz + mol->local_coords[a * 3 + 2];
+
+    float gx, gy, gz;
+    nibble_gradient(pocket, atom_x, atom_y, atom_z, &gx, &gy, &gz);
+
+    /* r relative to COM */
+    float rx = mol->local_coords[a * 3 + 0];
+    float ry = mol->local_coords[a * 3 + 1];
+    float rz = mol->local_coords[a * 3 + 2];
+
+    /* tau += r x F */
+    *tau_x += ry * gz - rz * gy;
+    *tau_y += rz * gx - rx * gz;
+    *tau_z += rx * gy - ry * gx;
+  }
+}
+
+/* Rotate all atoms in molecule using current quaternion */
+void nibble_rotate_mol_atoms(NibbleMol *mol) {
+  for (int a = 0; a < mol->n_atoms; ++a) {
+    float x = mol->local_coords[a * 3 + 0];
+    float y = mol->local_coords[a * 3 + 1];
+    float z = mol->local_coords[a * 3 + 2];
+
+    nibble_quat_rotate_point(x, y, z,
+                              mol->qw, mol->qx, mol->qy, mol->qz,
+                              &mol->local_coords[a * 3 + 0],
+                              &mol->local_coords[a * 3 + 1],
+                              &mol->local_coords[a * 3 + 2]);
+  }
+}
+
 NibbleMol *nibble_mol_create(int n_atoms, const float *local_coords,
                              const float *ch_vals) {
   NibbleMol *mol = (NibbleMol *)malloc(sizeof(NibbleMol));
@@ -241,6 +364,7 @@ void nibble_langevin_step(NibbleMol *mol, const NibbleGrid *pocket,
   float noise_scale = sqrtf(2.0f * gamma * kT * dt);
   float exp_gdt = expf(-gamma * dt);
 
+  /* ========== TRANSLATIONAL DYNAMICS ========== */
   /* Velocity Verlet-Langevin: v_new = v*exp(-gamma*dt) + F*dt + noise */
   mol->vx = mol->vx * exp_gdt + gx * dt + noise_scale * rng_normal(rng_state);
   mol->vy = mol->vy * exp_gdt + gy * dt + noise_scale * rng_normal(rng_state);
@@ -250,6 +374,41 @@ void nibble_langevin_step(NibbleMol *mol, const NibbleGrid *pocket,
   mol->cy += mol->vy * dt;
   mol->cz += mol->vz * dt;
 
+  /* ========== ROTATIONAL DYNAMICS ========== */
+  /* Compute body torque from per-atom forces */
+  float tau_x, tau_y, tau_z;
+  nibble_compute_body_torque(mol, pocket, &tau_x, &tau_y, &tau_z);
+
+  /* Compute inertia tensor (diagonal approximation for efficiency) */
+  float I[3][3];
+  nibble_compute_inertia_tensor(mol, I);
+
+  /* Simple diagonal inertia assumption: w_new = tau / I */
+  float I_xx = I[0][0];
+  float I_yy = I[1][1];
+  float I_zz = I[2][2];
+  
+  if (I_xx < 1e-9f) I_xx = 1.0f;
+  if (I_yy < 1e-9f) I_yy = 1.0f;
+  if (I_zz < 1e-9f) I_zz = 1.0f;
+
+  /* Langevin angular dynamics: w_new = w*exp(-gamma*dt) + (tau/I)*dt + noise_rot */
+  float noise_rot_scale = sqrtf(2.0f * gamma * kT * dt);
+  mol->wx = mol->wx * exp_gdt + (tau_x / I_xx) * dt + 
+            noise_rot_scale * rng_normal(rng_state) / I_xx;
+  mol->wy = mol->wy * exp_gdt + (tau_y / I_yy) * dt + 
+            noise_rot_scale * rng_normal(rng_state) / I_yy;
+  mol->wz = mol->wz * exp_gdt + (tau_z / I_zz) * dt + 
+            noise_rot_scale * rng_normal(rng_state) / I_zz;
+
+  /* Integrate quaternion */
+  nibble_quat_integrate(&mol->qw, &mol->qx, &mol->qy, &mol->qz,
+                        mol->wx, mol->wy, mol->wz, dt);
+
+  /* Apply rotation to all atoms */
+  nibble_rotate_mol_atoms(mol);
+
+  /* ========== BOUNDARY CONDITIONS ========== */
   /* Clamp to stay inside grid bounds */
   float max_x = (pocket->dim_x - 2) * pocket->resolution;
   float max_y = (pocket->dim_y - 2) * pocket->resolution;
