@@ -364,6 +364,11 @@ void nibble_langevin_step(NibbleMol *mol, const NibbleGrid *pocket,
   float noise_scale = sqrtf(2.0f * gamma * kT * dt);
   float exp_gdt = expf(-gamma * dt);
 
+  /* Rotational damping is lower than translational (Allen & Tildesley) */
+  float gamma_rot = gamma / 3.0f;
+  float exp_gdt_rot = expf(-gamma_rot * dt);
+  float noise_rot_scale = sqrtf(2.0f * gamma_rot * kT * dt);
+
   /* ========== TRANSLATIONAL DYNAMICS ========== */
   /* Velocity Verlet-Langevin: v_new = v*exp(-gamma*dt) + F*dt + noise */
   mol->vx = mol->vx * exp_gdt + gx * dt + noise_scale * rng_normal(rng_state);
@@ -383,7 +388,7 @@ void nibble_langevin_step(NibbleMol *mol, const NibbleGrid *pocket,
   float I[3][3];
   nibble_compute_inertia_tensor(mol, I);
 
-  /* Simple diagonal inertia assumption: w_new = tau / I */
+  /* Diagonal inertia: w_new = w*exp(-gamma_rot*dt) + (tau/I)*dt + noise */
   float I_xx = I[0][0];
   float I_yy = I[1][1];
   float I_zz = I[2][2];
@@ -392,14 +397,13 @@ void nibble_langevin_step(NibbleMol *mol, const NibbleGrid *pocket,
   if (I_yy < 1e-9f) I_yy = 1.0f;
   if (I_zz < 1e-9f) I_zz = 1.0f;
 
-  /* Langevin angular dynamics: w_new = w*exp(-gamma*dt) + (tau/I)*dt + noise_rot */
-  float noise_rot_scale = sqrtf(2.0f * gamma * kT * dt);
-  mol->wx = mol->wx * exp_gdt + (tau_x / I_xx) * dt + 
-            noise_rot_scale * rng_normal(rng_state) / I_xx;
-  mol->wy = mol->wy * exp_gdt + (tau_y / I_yy) * dt + 
-            noise_rot_scale * rng_normal(rng_state) / I_yy;
-  mol->wz = mol->wz * exp_gdt + (tau_z / I_zz) * dt + 
-            noise_rot_scale * rng_normal(rng_state) / I_zz;
+  /* Langevin angular dynamics with reduced damping and proper noise scaling */
+  mol->wx = mol->wx * exp_gdt_rot + (tau_x / I_xx) * dt + 
+            (noise_rot_scale / I_xx) * rng_normal(rng_state);
+  mol->wy = mol->wy * exp_gdt_rot + (tau_y / I_yy) * dt + 
+            (noise_rot_scale / I_yy) * rng_normal(rng_state);
+  mol->wz = mol->wz * exp_gdt_rot + (tau_z / I_zz) * dt + 
+            (noise_rot_scale / I_zz) * rng_normal(rng_state);
 
   /* Integrate quaternion */
   nibble_quat_integrate(&mol->qw, &mol->qx, &mol->qy, &mol->qz,
