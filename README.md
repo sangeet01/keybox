@@ -232,9 +232,9 @@ python tests/test_keybox_v0_8.py
 - [x] Combined Mixture-Process optimization (v0.8.0)
 - [x] Tier 3 Langevin Trajectory (v0.8.1)
 - [x] Tier 4 Induced Fit & Elastic Deformation (v0.8.1)
-- [x] VATI Thermodynamic Integration (Gap Closure)
-- [x] Virtual Water Network (Gap Closure)
-- [x] Covalent Trigger (Gap Closure)
+- [x] VATI Thermodynamic Integration
+- [x] Virtual Water Network 
+- [x] Covalent Trigger 
 
 ### Planned
 - [ ] Expand validation to 100+ pairs
@@ -257,4 +257,4 @@ See [LICENSE](LICENSE) file for full details.
 
 **Version**: 0.8.1
 **Status**: Stable Release -- Dynamics Edition
-**Last Updated**: April 2026
+**Last Updated**: May 2026
