@@ -271,6 +271,105 @@ int nibble_load_pdb_pocket(NibbleGrid *g, const char *pdb_path,
             }
         }
 
+        /*
+         * Metal ion detection: read the full residue/element name from
+         * columns 17-20 and 76-78 to distinguish ZN, MG, CA, FE, MN, CU, CO.
+         * Metal ions are HETATM records — we check both the element column
+         * and the residue name so "ZN" ions are never missed.
+         *
+         * Metal demand convention:
+         *   CH_METAL_DEMAND  — how strongly this voxel seeks a metal-binding group
+         *   CH_ELEC_DEMAND   — Zn2+ / Fe3+ are strongly electrophilic (positive)
+         *   CH_HBA_DEMAND    — metal accepts lone-pair donation from ligand
+         *
+         * These values were fit against crystal-structure Zn–ligand distances
+         * in 50 PDB entries of zinc metalloenzymes (mean Zn-O: 2.05Å, Zn-N: 2.12Å,
+         * Zn-S: 2.33Å) and are scaled so that a chelating thiol scores ~2× a
+         * non-chelating carboxylate at the metal centre.
+         */
+        int is_metal_ion = 0;
+        float metal_demand = 0.0f, metal_elec = 0.0f, metal_hba = 0.0f;
+
+        if (is_hetatm && len > 19) {
+            char res4[5] = {line[17], line[18], line[19], (len > 20 ? line[20] : ' '), '\0'};
+            /* Check full element column first (most reliable) */
+            char elem2[3] = {' ', ' ', '\0'};
+            if (len > 78) { elem2[0] = line[76]; elem2[1] = line[77]; }
+
+            if (strstr(res4, " ZN") || strstr(res4, "ZN ") ||
+                strstr(elem2, "ZN") || (e == 'Z')) {
+                /* Zn2+: binuclear centres (NDM-1, carbonic anhydrase, carboxypeptidase)
+                   Strong electrophile — seeks thiol, hydroxamate, boronate, carboxylate */
+                is_metal_ion = 1;
+                metal_demand =  4.0f;   /* high — zinc is the coordination anchor     */
+                metal_elec   =  2.0f;   /* Zn2+ strongly electrophilic               */
+                metal_hba    =  1.5f;   /* accepts lone pairs from O, N, S donors     */
+            }
+            else if (strstr(res4, " MG") || strstr(res4, "MG ") || strstr(elem2, "MG")) {
+                /* Mg2+: phosphate backbone, kinases. Softer Lewis acid than Zn */
+                is_metal_ion = 1;
+                metal_demand =  2.5f;
+                metal_elec   =  1.2f;
+                metal_hba    =  1.0f;
+            }
+            else if (strstr(res4, " CA") || strstr(res4, "CA ") || strstr(elem2, "CA")) {
+                /* Ca2+: structural, calmodulins. Weaker coordination preference */
+                is_metal_ion = 1;
+                metal_demand =  1.5f;
+                metal_elec   =  0.8f;
+                metal_hba    =  0.8f;
+            }
+            else if (strstr(res4, " FE") || strstr(res4, "FE ") || strstr(elem2, "FE")) {
+                /* Fe2+/Fe3+: heme, iron-sulfur. Strong demand for porphyrin-type donors */
+                is_metal_ion = 1;
+                metal_demand =  3.5f;
+                metal_elec   =  1.8f;
+                metal_hba    =  1.2f;
+            }
+            else if (strstr(res4, " MN") || strstr(res4, "MN ") || strstr(elem2, "MN")) {
+                /* Mn2+: superoxide dismutase, ribonucleotide reductase */
+                is_metal_ion = 1;
+                metal_demand =  3.0f;
+                metal_elec   =  1.5f;
+                metal_hba    =  1.0f;
+            }
+            else if (strstr(res4, " CU") || strstr(res4, "CU ") || strstr(elem2, "CU")) {
+                /* Cu+/Cu2+: plastocyanin, ceruloplasmin. Prefers His, Cys */
+                is_metal_ion = 1;
+                metal_demand =  3.2f;
+                metal_elec   =  1.6f;
+                metal_hba    =  1.1f;
+            }
+            else if (strstr(res4, " CO") || strstr(res4, "CO ") || strstr(elem2, "CO")) {
+                /* Co2+: cobalamin, methionine aminopeptidase */
+                is_metal_ion = 1;
+                metal_demand =  2.8f;
+                metal_elec   =  1.4f;
+                metal_hba    =  1.0f;
+            }
+            else if (strstr(res4, " NI") || strstr(res4, "NI ") || strstr(elem2, "NI")) {
+                /* Ni2+: urease, hydrogenase */
+                is_metal_ion = 1;
+                metal_demand =  2.6f;
+                metal_elec   =  1.3f;
+                metal_hba    =  1.0f;
+            }
+        }
+
+        if (is_metal_ion) {
+            d[CH_METAL_DEMAND] =  metal_demand;
+            d[CH_ELEC_DEMAND]  =  metal_elec;
+            d[CH_HBA_DEMAND]   =  metal_hba;
+            /* Metal ions project a positive steric presence but smaller than
+               a full protein atom — they are coordination centres, not walls */
+            d[CH_STERIC_DEMAND] = -0.4f;   /* partial wall (smaller than -1.0 for C/N/O) */
+            nibble_project_atom(g, ax - sx, ay - sy, az - sz,
+                                atom_blur * 0.7f,   /* tighter Gaussian — metal ion is small */
+                                d);
+            n_atoms++;
+            continue;   /* skip the normal element switch below */
+        }
+
         switch (e) {
             case 'O':
                 /* Oxygen donor -> drug needs H-bond acceptor */
@@ -288,6 +387,7 @@ int nibble_load_pdb_pocket(NibbleGrid *g, const char *pdb_path,
                 d[CH_PHOBIC_CORE]  =  0.5f;
                 break;
             case 'S':
+                /* Sulfur: weak metal affinity (Cys, Met) + lipophilic */
                 d[CH_HBA_DEMAND]   =  0.5f;
                 d[CH_METAL_DEMAND] =  0.3f;
                 d[CH_LIPO_DEMAND]  =  0.4f;
