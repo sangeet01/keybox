@@ -49,6 +49,19 @@ from .mechanisms import (
 from .core_engine import KeyBoxSystem
 from .nibble_bridge import NibbleEngine
 
+# Khukuri docking fitness — lives in box/ not box/key/
+try:
+    import importlib, sys, pathlib
+    _box = pathlib.Path(__file__).parent.parent
+    if str(_box) not in sys.path: sys.path.insert(0, str(_box))
+    _kn = importlib.import_module("khukuri_nibble")
+    NibbleFitness       = _kn.NibbleFitness
+    PincerNibbleAdapter = _kn.PincerNibbleAdapter
+    del _kn, _box, importlib
+except Exception:
+    NibbleFitness       = None
+    PincerNibbleAdapter = None
+
 # Legacy entry point (re-exports)
 from . import core_engine
 
@@ -124,4 +137,6 @@ __all__ = [
     "KeyBoxOptimizer",
     "generate_box_behnken",
     "NibbleEngine",
+    "NibbleFitness",
+    "PincerNibbleAdapter",
 ]
