@@ -25,7 +25,10 @@ SOURCES = [
     os.path.join(HERE, "nibble_tier3.c"),
     os.path.join(HERE, "nibble_tier4.c"),
     os.path.join(HERE, "nibble_gaps.c"),
-    os.path.join(HERE, "nibble_ppi.c"),      # PPI extension — new
+    os.path.join(HERE, "nibble_ppi.c"),      # PPI extension
+    os.path.join(HERE, "nibble_protac.c"),   # PROTAC ternary extension
+    os.path.join(HERE, "nibble_peptide.c"),  # Peptide docking extension
+    os.path.join(HERE, "nibble_antibody.c"), # Antibody CDR-antigen extension — new
 ]
 
 # -----------------------------------------------------------------------
@@ -91,12 +94,20 @@ if __name__ == "__main__":
     size_kb = os.path.getsize(OUTPUT_LIB) // 1024
     print(f"Built: {OUTPUT_LIB} ({size_kb} KB)")
     print()
-    print("New PPI functions available:")
-    print("  nibble_detect_interface()       — inter-residue contact detection")
-    print("  nibble_load_ppi_surface()       — irregular surface patch loading")
-    print("  nibble_sc_score()               — Lawrence-Coleman shape complementarity")
-    print("  nibble_score_hotspots()         — alanine-scanning proxy hotspot detection")
-    print("  nibble_ppi_affinity()           — composite PPI binding score")
-    print("  nibble_load_ppi_inhibitor_site()— pharmacophore for inhibitor design")
+    print("PPI functions:")
+    print("  nibble_detect_interface()        — inter-residue contact detection")
+    print("  nibble_load_ppi_surface()        — irregular surface patch loading")
+    print("  nibble_sc_score()                — Lawrence-Coleman shape complementarity")
+    print("  nibble_score_hotspots()          — alanine-scanning proxy hotspot detection")
+    print("  nibble_ppi_affinity()            — composite PPI binding score")
+    print("  nibble_load_ppi_inhibitor_site() — pharmacophore for inhibitor design")
+    print()
+    print("PROTAC ternary functions:")
+    print("  nibble_protac_create()           — bifunctional molecule decomposition")
+    print("  nibble_protac_linker_penalty()   — Gaussian chain geometry feasibility")
+    print("  nibble_protac_cooperativity()    — Hook et al. alpha parameter")
+    print("  nibble_protac_neo_ppi()          — induced ternary interface scoring")
+    print("  nibble_protac_score()            — full ternary composite score")
+    print("  nibble_protac_trajectory()       — dumbbell Langevin optimisation")
     print()
     print("Done. nibble_bridge.py will load the updated library automatically.")
