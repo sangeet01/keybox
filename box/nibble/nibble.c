@@ -2,7 +2,7 @@
  * nibble.c (V4 - Tier 3/4 + Gap Closure)
  * Negative Space Matrix Multiplication Docking Engine
  *
- * Architecture (theory.txt):
+ * Architecture :
  *   Phase I  Coarse  1.0 A : Sterics + electrostatics, ~10 us per molecule
  *   Phase II Sniper  0.25A : Full 11-channel + B-factor Gaussian blur, ~5 ms per molecule
  *
@@ -112,7 +112,7 @@ float nibble_compute_affinity(const NibbleGrid *pocket, const NibbleGrid *drug) 
         if (ds > 0.1f && ps < 0.05f) {
             score -= 500.0f * ds;
         } else {
-            /* Unrolled Hadamard sum over all 11 channels */
+            /* Channels 0-10: standard Hadamard complementarity */
             score += ps      * ds;       /* steric complement        */
             score += pp[1]  * dp[1];    /* electrostatics           */
             score += pp[2]  * dp[2];    /* HBA demand               */
@@ -124,12 +124,47 @@ float nibble_compute_affinity(const NibbleGrid *pocket, const NibbleGrid *drug) 
             score += pp[8]  * dp[8];    /* anionic                  */
             score += pp[9]  * dp[9];    /* buried hydrophobic core  */
             score += pp[10] * dp[10];   /* solvent exposure         */
-            /* Gap Closure channels */
-            score += pp[11] * dp[11];   /* flexibility              */
-            score += pp[12] * dp[12];   /* nucleophilicity          */
-            score += pp[13] * dp[13];   /* electrophilicity         */
-            score += pp[14] * dp[14];   /* conserved water          */
-            score += pp[15] * dp[15];   /* dynamic water            */
+
+            /*
+             * Gap Closure channels (11-15): physically motivated scoring.
+             *
+             * CH_FLEXIBILITY (11):
+             *   Pocket flexibility is not a demand the drug must match —
+             *   it is a reward multiplier. A drug atom landing in a flexible
+             *   pocket region gets a bonus because the pocket can adapt.
+             *   Score = flex_pocket * ds (drug steric presence).
+             *   Scale factor 0.5: flexibility bonus is secondary to direct
+             *   channel complementarity.
+             */
+            score += 0.5f * pp[11] * ds;
+
+            /*
+             * CH_NUCLEOPHILICITY (12) / CH_ELECTROPHILICITY (13):
+             *   These are CROSS-COMPLEMENTARY, not self-complementary.
+             *   A nucleophilic pocket site (lone pair donor) is satisfied
+             *   by an electrophilic drug atom, and vice versa.
+             *   Score = pocket_nucl * drug_elec + pocket_elec * drug_nucl
+             *   Scale factor 0.8: weaker than direct H-bond (1.0) since
+             *   this is a ground-state proxy for frontier orbital overlap.
+             */
+            score += 0.8f * (pp[12] * dp[13] + pp[13] * dp[12]);
+
+            /*
+             * CH_WATER_CONSERVED (14) / CH_WATER_DYNAMIC (15):
+             *   In the base affinity function, water channels contribute
+             *   a simple displaceability signal:
+             *   - If the drug atom is present (ds > 0) and the pocket has
+             *     conserved water, score a small penalty (displacing a
+             *     tightly bound water costs energy).
+             *   - Dynamic water: slight bonus if drug HBA/HBD can bridge
+             *     to a water-occupied voxel.
+             *   Full water network scoring is handled in
+             *   nibble_compute_affinity_full() via explicit bonus/penalty.
+             *   Here we only apply the displacement cost.
+             *   Scale -0.3: partial cost; full cost is in affinity_full.
+             */
+            score -= 0.3f * pp[14] * ds;   /* conserved water displacement cost */
+            score -= 0.1f * pp[15] * ds;   /* dynamic water displacement cost   */
         }
         pp += N_CHANNELS;
         dp += N_CHANNELS;
@@ -242,29 +277,140 @@ int nibble_load_pdb_pocket(NibbleGrid *g, const char *pdb_path,
         float d[N_CHANNELS] = {0.0f};
         d[CH_STERIC_DEMAND] = -1.0f; /* always: protein atom = wall */
 
-        /* Flexibility channel from residue type (Proline=rigid, Gly=flexible) */
-        /* Default flexibility is 0.3 (medium). Override per residue below. */
-        d[CH_FLEXIBILITY] = 0.3f;
+        /*
+         * CH_FLEXIBILITY: B-factor driven with residue-type prior.
+         *
+         * Physics: crystallographic B-factor = 8*pi^2 * <u^2>, where <u^2>
+         * is mean-square atomic displacement (Angstrom^2). It is the direct
+         * experimental measure of per-atom mobility. We normalise to [0,1]
+         * over a practical range of 0-80 A^2 (>80 = disordered loop).
+         *
+         * Residue prior captures intrinsic backbone/sidechain freedom
+         * independent of crystal packing:
+         *   GLY  0.90 — no sidechain, phi/psi unrestricted
+         *   SER  0.75 — small polar, loose packing
+         *   THR  0.70 — small polar with beta-branch
+         *   ALA  0.65 — minimal sidechain
+         *   ASN  0.65 — polar, rotatable
+         *   GLN  0.65 — longer polar rotatable chain
+         *   LYS  0.70 — long flexible aliphatic+amine
+         *   ARG  0.65 — long guanidinium, multiple rotamers
+         *   MET  0.60 — flexible sulfur chain
+         *   ASP  0.50 — charged, moderate restriction
+         *   GLU  0.50 — charged, moderate restriction
+         *   HIS  0.45 — aromatic but rotatable chi
+         *   CYS  0.40 — free Cys moderate; disulfide would be rigid
+         *   TRP  0.30 — bulky indole locks chi2
+         *   TYR  0.30 — aromatic ring restricts chi2
+         *   PHE  0.25 — aromatic, tightly packed
+         *   VAL  0.20 — beta-branched, restricts packing
+         *   LEU  0.20 — branched aliphatic, tight core packing
+         *   ILE  0.18 — doubly beta-branched
+         *   PRO  0.05 — locked backbone, zero phi freedom
+         *   default 0.35 — unknown/non-standard residue
+         *
+         * Final formula:
+         *   b_norm    = clamp(B_factor / 80.0, 0, 1)
+         *   flex      = 0.70 * b_norm + 0.30 * res_prior
+         *
+         * Weight rationale: B-factor carries the dominant signal (0.70)
+         * because it reflects actual crystal mobility. Residue prior (0.30)
+         * provides a physically grounded floor for atoms with missing or
+         * zero B-factors (common in older PDB entries).
+         */
 
-        /* Read residue name from columns 17-20 (0-indexed 17-19) for flexibility */
+        /* --- Step 1: residue prior --- */
+        float res_prior = 0.35f; /* default: unknown residue */
         if (len > 19) {
             char res3[4] = {line[17], line[18], line[19], '\0'};
-            if (strstr(res3, "GLY") || strstr(res3, "ALA"))
-                d[CH_FLEXIBILITY] = 0.9f; /* very flexible */
-            else if (strstr(res3, "PRO"))
-                d[CH_FLEXIBILITY] = 0.05f; /* rigid */
-            else if (strstr(res3, "VAL") || strstr(res3, "LEU") || strstr(res3, "ILE"))
-                d[CH_FLEXIBILITY] = 0.15f;
+            /* Very flexible */
+            if      (strstr(res3, "GLY")) res_prior = 0.90f;
+            else if (strstr(res3, "SER")) res_prior = 0.75f;
+            else if (strstr(res3, "THR")) res_prior = 0.70f;
+            else if (strstr(res3, "LYS")) res_prior = 0.70f;
+            /* Flexible */
+            else if (strstr(res3, "ALA")) res_prior = 0.65f;
+            else if (strstr(res3, "ASN")) res_prior = 0.65f;
+            else if (strstr(res3, "GLN")) res_prior = 0.65f;
+            else if (strstr(res3, "ARG")) res_prior = 0.65f;
+            else if (strstr(res3, "MET")) res_prior = 0.60f;
+            /* Medium */
+            else if (strstr(res3, "ASP")) res_prior = 0.50f;
+            else if (strstr(res3, "GLU")) res_prior = 0.50f;
+            else if (strstr(res3, "HIS")) res_prior = 0.45f;
+            else if (strstr(res3, "CYS")) res_prior = 0.40f;
+            /* Rigid */
+            else if (strstr(res3, "TRP")) res_prior = 0.30f;
+            else if (strstr(res3, "TYR")) res_prior = 0.30f;
+            else if (strstr(res3, "PHE")) res_prior = 0.25f;
+            else if (strstr(res3, "VAL")) res_prior = 0.20f;
+            else if (strstr(res3, "LEU")) res_prior = 0.20f;
+            else if (strstr(res3, "ILE")) res_prior = 0.18f;
+            else if (strstr(res3, "PRO")) res_prior = 0.05f;
         }
 
-        /* HOH water records get projected into CH_WATER_CONSERVED */
+        /* --- Step 2: B-factor normalisation --- */
+        float b_norm = 0.0f;
+        if (len > 66) {
+            char bfbuf[7];
+            strncpy(bfbuf, line + 60, 6); bfbuf[6] = '\0';
+            float bval = (float)atof(bfbuf);
+            if (bval > 0.0f) {
+                b_norm = bval / 80.0f;
+                if (b_norm > 1.0f) b_norm = 1.0f;
+            }
+        }
+
+        /* --- Step 3: combine --- */
+        d[CH_FLEXIBILITY] = 0.70f * b_norm + 0.30f * res_prior;
+
+        /*
+         * HOH water records: project into CH_WATER_CONSERVED.
+         *
+         * Not all crystallographic waters are equal. Low B-factor waters
+         * (B < 20 A^2) are tightly held — they mediate conserved H-bond
+         * networks and are found in nearly every structure of that protein.
+         * High B-factor waters (B > 40 A^2) are disordered, often
+         * artefacts of crystal packing, and should not be treated as
+         * pharmacophore-relevant.
+         *
+         * Strategy:
+         *   B < 20  -> conserved_weight = 1.0  (tightly bound, always present)
+         *   20-40   -> conserved_weight = linear falloff to 0.3
+         *   > 40    -> conserved_weight = 0.0  (disordered, skip entirely)
+         *
+         * CH_HBA_DEMAND and CH_HBD_DEMAND are set proportional to
+         * conserved_weight so water-mediated H-bond scoring is
+         * automatically downweighted for mobile waters.
+         *
+         * Ref: Loris et al., Proteins 1999 — conserved waters in lectins
+         *      have B < 25 A^2; disordered waters B > 40 A^2.
+         */
         if (is_hetatm && len > 19) {
             char res3[4] = {line[17], line[18], line[19], '\0'};
             if (strstr(res3, "HOH") || strstr(res3, "WAT")) {
+                /* Read B-factor for this water */
+                float w_bval = 30.0f; /* default: moderate if missing */
+                if (len > 66) {
+                    char wbuf[7];
+                    strncpy(wbuf, line + 60, 6); wbuf[6] = '\0';
+                    float tmp = (float)atof(wbuf);
+                    if (tmp > 0.0f) w_bval = tmp;
+                }
+
+                float conserved_weight;
+                if      (w_bval < 20.0f) conserved_weight = 1.0f;
+                else if (w_bval > 40.0f) conserved_weight = 0.0f;
+                else                     conserved_weight = 1.0f - (w_bval - 20.0f) / 20.0f;
+                /* clamp to [0.3, 1.0] for the 20-40 range */
+                if (conserved_weight < 0.3f && w_bval <= 40.0f) conserved_weight = 0.3f;
+
+                if (conserved_weight < 0.01f) continue; /* disordered — skip */
+
                 float wd[N_CHANNELS] = {0};
-                wd[CH_HBA_DEMAND]      = 1.0f;
-                wd[CH_HBD_DEMAND]      = 1.0f;
-                wd[CH_WATER_CONSERVED] = 1.0f;
+                wd[CH_HBA_DEMAND]      = conserved_weight;
+                wd[CH_HBD_DEMAND]      = conserved_weight;
+                wd[CH_WATER_CONSERVED] = conserved_weight;
                 nibble_project_atom(g, ax - sx, ay - sy, az - sz, 1.4f, wd);
                 n_atoms++;
                 continue; /* skip the normal element projection below */
