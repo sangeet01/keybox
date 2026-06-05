@@ -53,10 +53,13 @@ typedef enum {
 typedef struct {
     float  cx, cy, cz;       /* Center of mass position */
     float  vx, vy, vz;       /* Center of mass velocity */
-    float  qw, qx, qy, qz;  /* Orientation quaternion */
+    float  qw, qx, qy, qz;  /* Orientation quaternion (cumulative) */
     float  wx, wy, wz;       /* Angular velocity */
     int    n_atoms;
-    float *local_coords;     /* Atom coords relative to center [n_atoms * 3] */
+    float *local_coords;     /* Atom coords in current pose [n_atoms * 3] */
+    float *ref_coords;       /* Atom coords in initial (reference) pose [n_atoms * 3]
+                              * Rotation is always applied to ref_coords -> local_coords
+                              * to prevent quaternion drift accumulation. */
     float *ch_vals;          /* Channel values per atom [n_atoms * N_CHANNELS] */
 } NibbleMol;
 
