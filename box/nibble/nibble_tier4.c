@@ -44,7 +44,6 @@ void nibble_thermal_breathe(NibbleGrid *grid, float sigma_delta) {
 void nibble_elastic_deform(NibbleGrid *protein, const NibbleGrid *ligand,
                             float elasticity_scale) {
     size_t n_vox = (size_t)protein->dim_x * protein->dim_y * protein->dim_z;
-    int dx = protein->dim_x, dy = protein->dim_y, dz = protein->dim_z;
     int nc = N_CHANNELS;
 
     for (size_t idx = 0; idx < n_vox; ++idx) {
