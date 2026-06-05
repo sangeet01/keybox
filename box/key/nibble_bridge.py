@@ -535,39 +535,44 @@ class NativeNibbleEngine:
 
 class LangevinMol:
     """Stateful C-native molecule for Langevin trajectories."""
-    def __init__(self, engine, coords, charges, hydrophobicity, start_coords):
+    def __init__(self, engine, mol, start_coords):
+        """
+        Parameters
+        ----------
+        engine      : NativeNibbleEngine
+        mol         : Molecule (KeyBox Molecule dataclass)
+        start_coords: (sx, sy, sz) grid origin in absolute coordinates
+        """
         self.engine = engine
-        self._lib = engine._lib
-        n_atoms = len(coords)
-        
-        # Compute absolute center of mass
-        cx_abs = sum(c[0] for c in coords) / n_atoms
-        cy_abs = sum(c[1] for c in coords) / n_atoms
-        cz_abs = sum(c[2] for c in coords) / n_atoms
-        
-        # Grid coordinates for center of mass
+        self._lib   = engine._lib
+        coords      = mol.coords
+        n_atoms     = len(coords)
+
+        # Center of mass in absolute coordinates
+        cx_abs = float(np.mean(coords[:, 0]))
+        cy_abs = float(np.mean(coords[:, 1]))
+        cz_abs = float(np.mean(coords[:, 2]))
+
+        # Center of mass in grid-local coordinates
         cx_grid = cx_abs - start_coords[0]
         cy_grid = cy_abs - start_coords[1]
         cz_grid = cz_abs - start_coords[2]
 
+        # Atom positions relative to center of mass (grid-local)
         local_coords = np.zeros((n_atoms, 3), dtype=np.float32)
-        ch_vals = np.zeros((n_atoms, N_CHANNELS), dtype=np.float32)
-        
-        for i in range(n_atoms):
-            local_coords[i][0] = (coords[i][0] - start_coords[0]) - cx_grid
-            local_coords[i][1] = (coords[i][1] - start_coords[1]) - cy_grid
-            local_coords[i][2] = (coords[i][2] - start_coords[2]) - cz_grid
-            
-            ch_vals[i][CH_STERIC_DEMAND] = 1.0
-            ch_vals[i][CH_ELEC_DEMAND] = charges[i]
-            ch_vals[i][CH_LIPO_DEMAND] = hydrophobicity[i]
+        local_coords[:, 0] = coords[:, 0] - start_coords[0] - cx_grid
+        local_coords[:, 1] = coords[:, 1] - start_coords[1] - cy_grid
+        local_coords[:, 2] = coords[:, 2] - start_coords[2] - cz_grid
+
+        # Full 16-channel array via shared helper
+        ch_vals = NibbleEngine._mol_to_channel_array(mol)
 
         self.mol_ptr = self._lib.nibble_mol_create(
-            n_atoms, 
+            n_atoms,
             local_coords.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
             ch_vals.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         )
-        
+
         self.mol_ptr.contents.cx = cx_grid
         self.mol_ptr.contents.cy = cy_grid
         self.mol_ptr.contents.cz = cz_grid
@@ -716,32 +721,166 @@ class NibbleEngine:
     def load_pdb_pocket(self, pdb_path, center, range_val=10.0, blur_radius=1.5):
         return self.backend.load_pdb_pocket(pdb_path, center, range_val, blur_radius)
 
+    @staticmethod
+    def _mol_to_channel_array(mol) -> np.ndarray:
+        """
+        Build a per-atom channel array [n_atoms, N_CHANNELS] from a Molecule.
+
+        Previously only CH_STERIC, CH_ELEC, CH_LIPO were populated --
+        leaving 13 channels dark on the drug side. This meant H-bond,
+        aromaticity, metal coordination, and Fukui scoring were all
+        one-sided (pocket only), making them useless for discrimination.
+
+        Channel mapping:
+          0  STERIC           always 1.0 (drug atom present)
+          1  ELEC             Gasteiger partial charge
+          2  HBA_DEMAND       drug H-bond acceptor
+          3  HBD_DEMAND       drug H-bond donor
+          4  LIPO             hydrophobicity index (Crippen)
+          5  AROM             aromatic atom flag
+          6  METAL            metal-binding group proxy
+          7  CATION           protonated/quaternary N
+          8  ANION            carboxylate/phosphate O
+          9  PHOBIC_CORE      buried hydrophobic (high hydrophobicity + low charge)
+         10  SOLVENT_EXPO     polarizability as solvent exposure proxy
+         11  FLEXIBILITY      0.0 (flexibility is a pocket property, not drug)
+         12  NUCLEOPHILICITY  Fukui f-: |q|^2 for negatively charged atoms
+         13  ELECTROPHILICITY Fukui f+: |q|^2 for positively charged atoms
+         14  WATER_CONSERVED  0.0 (drug doesn't carry crystallographic waters)
+         15  WATER_DYNAMIC    0.0 (handled by desolvation penalty separately)
+        """
+        from rdkit import Chem
+
+        n = len(mol.coords)
+        ch = np.zeros((n, N_CHANNELS), dtype=np.float32)
+
+        charges        = np.array(mol.charges,        dtype=np.float32)
+        hydrophobicity = np.array(mol.hydrophobicity,  dtype=np.float32)
+        h_donors       = np.array(mol.h_donors,        dtype=np.float32) if mol.h_donors       is not None else np.zeros(n, dtype=np.float32)
+        h_acceptors    = np.array(mol.h_acceptors,     dtype=np.float32) if mol.h_acceptors     is not None else np.zeros(n, dtype=np.float32)
+        polarizability = np.array(mol.polarizability,  dtype=np.float32) if mol.polarizability  is not None else np.zeros(n, dtype=np.float32)
+
+        # CH_STERIC: always 1.0
+        ch[:, CH_STERIC_DEMAND] = 1.0
+
+        # CH_ELEC: partial charge
+        ch[:, CH_ELEC_DEMAND] = charges
+
+        # CH_HBA / CH_HBD
+        ch[:, CH_HBA_DEMAND] = h_acceptors
+        ch[:, CH_HBD_DEMAND] = h_donors
+
+        # CH_LIPO
+        ch[:, CH_LIPO_DEMAND] = hydrophobicity
+
+        # CH_AROM: aromatic atoms from SMILES
+        if mol.smiles:
+            try:
+                rdmol = Chem.MolFromSmiles(mol.smiles)
+                if rdmol is not None:
+                    rdmol_h = Chem.AddHs(rdmol)
+                    n_rdkit = rdmol_h.GetNumAtoms()
+                    arom_flags = np.array(
+                        [1.0 if rdmol_h.GetAtomWithIdx(i).GetIsAromatic() else 0.0
+                         for i in range(min(n_rdkit, n))],
+                        dtype=np.float32
+                    )
+                    ch[:len(arom_flags), CH_AROM_DEMAND] = arom_flags
+            except Exception:
+                pass
+
+        # CH_METAL: metal-binding group proxy
+        # reactive_groups flags N and O; gate by negative charge (lone pair donors)
+        if mol.reactive_groups is not None:
+            rg = np.array(mol.reactive_groups, dtype=np.float32)
+            ch[:, CH_METAL_DEMAND] = rg * np.clip(-charges, 0.0, 1.0)
+
+        # CH_CATION: protonated N (basic group + positive charge)
+        if mol.base_groups is not None:
+            bg = np.array(mol.base_groups, dtype=np.float32)
+            ch[:, CH_CATION_DEMAND] = bg * np.clip(charges, 0.0, 1.0)
+
+        # CH_ANION: carboxylate/phosphate O (acid group + negative charge)
+        if mol.acid_groups is not None:
+            ag = np.array(mol.acid_groups, dtype=np.float32)
+            ch[:, CH_ANION_DEMAND] = ag * np.clip(-charges, 0.0, 1.0)
+
+        # CH_PHOBIC_CORE: high hydrophobicity + near-zero charge
+        charge_penalty = np.exp(-4.0 * charges**2)
+        ch[:, CH_PHOBIC_CORE] = np.clip(hydrophobicity, 0.0, None) * charge_penalty
+
+        # CH_SOLVENT_EXPO: polarizability normalised
+        pol_max = polarizability.max()
+        pol_norm = polarizability / (pol_max + 1e-6) if pol_max > 0 else polarizability
+        ch[:, CH_SOLVENT_EXPO] = pol_norm
+
+        # CH_FLEXIBILITY: 0.0 -- flexibility is a pocket property
+        ch[:, CH_FLEXIBILITY] = 0.0
+
+        # CH_NUCLEOPHILICITY / CH_ELECTROPHILICITY: Fukui proxy
+        # Matches nibble_project_fukui: threshold |q| < 0.1, sharpening q^2
+        Q_THRESH = 0.10
+        q_abs    = np.abs(charges)
+        q_sharp  = np.where(q_abs >= Q_THRESH, q_abs ** 2, 0.0).astype(np.float32)
+        ch[:, CH_NUCLEOPHILICITY]  = np.where(charges <  0.0, q_sharp, 0.0)
+        ch[:, CH_ELECTROPHILICITY] = np.where(charges >= 0.0, q_sharp, 0.0)
+
+        # CH_WATER_CONSERVED / CH_WATER_DYNAMIC: 0.0
+        ch[:, CH_WATER_CONSERVED] = 0.0
+        ch[:, CH_WATER_DYNAMIC]   = 0.0
+
+        return ch
+
     def project_molecule(self, drug_engine, start_coords):
-        """Projects APIs/Excipients and returns affinity."""
+        """Projects APIs/Excipients into a drug grid and returns affinity score."""
         if self.mode == "C-Native":
-            # Extract combined data for C
-            all_coords = []
-            all_charges = []
-            all_hydro = []
+            all_coords  = []
+            all_ch_vals = []
             for mol in drug_engine.apis + drug_engine.excipients:
-                all_coords.extend(mol.coords)
-                all_charges.extend(mol.charges)
-                all_hydro.extend(mol.hydrophobicity)
-            return self.backend.project_molecule_data(all_coords, all_charges, all_hydro, start_coords)
+                ch = self._mol_to_channel_array(mol)
+                all_coords.append(np.array(mol.coords, dtype=np.float32))
+                all_ch_vals.append(ch)
+
+            if not all_coords:
+                return 0.0
+
+            coords_np = np.vstack(all_coords).astype(np.float32)
+            ch_np     = np.vstack(all_ch_vals).astype(np.float32)
+            n_atoms   = len(coords_np)
+
+            # Translate to grid-local coordinates
+            coords_np[:, 0] -= start_coords[0]
+            coords_np[:, 1] -= start_coords[1]
+            coords_np[:, 2] -= start_coords[2]
+
+            # Build drug grid projecting each atom with full channel vector
+            drug_ptr = self._lib.nibble_create_grid(
+                self.dim_x, self.dim_y, self.dim_z, self.resolution
+            )
+            ch_row = (ctypes.c_float * N_CHANNELS)()
+            for i in range(n_atoms):
+                for c in range(N_CHANNELS):
+                    ch_row[c] = ch_np[i, c]
+                self._lib.nibble_project_atom(
+                    drug_ptr,
+                    coords_np[i, 0], coords_np[i, 1], coords_np[i, 2],
+                    1.5, ch_row
+                )
+            affinity = self._lib.nibble_compute_affinity(self.backend.grid_ptr, drug_ptr)
+            self._lib.nibble_free_grid(drug_ptr)
+            return float(affinity)
+
         else:
-            # NumPy path
+            # NumPy fallback -- full 16-channel projection
             drug_grid = NumPyNibbleEngine(self.dim_x, self.dim_y, self.dim_z, self.resolution)
             for mol in drug_engine.apis + drug_engine.excipients:
+                ch = self._mol_to_channel_array(mol)
                 for i in range(len(mol.coords)):
-                    ch_vals = [0.0] * N_CHANNELS
-                    ch_vals[CH_STERIC_DEMAND] = 1.0
-                    ch_vals[CH_ELEC_DEMAND] = float(mol.charges[i])
-                    ch_vals[CH_LIPO_DEMAND] = float(mol.hydrophobicity[i])
                     drug_grid.project_atom(
                         mol.coords[i][0] - start_coords[0],
                         mol.coords[i][1] - start_coords[1],
                         mol.coords[i][2] - start_coords[2],
-                        1.5, ch_vals
+                        1.5, ch[i].tolist()
                     )
             return self.backend.compute_affinity(drug_grid)
 
