@@ -255,6 +255,6 @@ See [LICENSE](LICENSE) file for full details.
 
 ---
 
-**Version**: 0.8.1
-**Status**: Stable Release -- Dynamics Edition
-**Last Updated**: May 2026
+**Version**: 0.8.2
+**Status**: Stable Release -- Expanding to biologics
+**Last Updated**: June 2026
